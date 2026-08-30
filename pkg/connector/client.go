@@ -36,15 +36,16 @@ type MetaClient struct {
 	UserLogin *bridgev2.UserLogin
 	Ghost     *bridgev2.Ghost
 
-	stopHandlingTables  atomic.Pointer[context.CancelFunc]
-	initialTable        atomic.Pointer[table.LSTable]
-	initialTableHandled atomic.Bool
-	parsedTables        chan *parsedTable
-	backfillCollectors  map[int64]*BackfillCollector
-	backfillLock        sync.Mutex
-	connectLock         sync.Mutex
-	stopConnectAttempt  atomic.Pointer[context.CancelFunc]
-	permanentErrored    atomic.Bool
+	stopHandlingTables   atomic.Pointer[context.CancelFunc]
+	initialTable         atomic.Pointer[table.LSTable]
+	initialTableHandled  atomic.Bool
+	parsedTables         chan *parsedTable
+	backfillCollectors   map[int64]*BackfillCollector
+	backfillLock         sync.Mutex
+	recoveringBareGroups atomic.Bool
+	connectLock          sync.Mutex
+	stopConnectAttempt   atomic.Pointer[context.CancelFunc]
+	permanentErrored     atomic.Bool
 
 	editChannels *exsync.Map[string, chan *FBEditEvent]
 

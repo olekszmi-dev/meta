@@ -92,6 +92,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 				log.Err(err).Msg("Thread backfill failed")
 			}
 		}()
+		go m.recoverRoomlessGroupPortals(ctx)
 	case *messagix.TransientDisconnectEvent:
 		log.Debug().Err(evt.Err).Msg("Disconnected from Meta socket")
 		m.connectWaiter.Clear()
@@ -109,6 +110,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		m.connectWaiter.Set()
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		go m.recoverRoomlessGroupPortals(ctx)
 	case *messagix.PermanentErrorEvent:
 		// TODO do full reconnect in some cases?
 		m.permanentErrored.Store(true)
