@@ -15,6 +15,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/metaid"
@@ -72,6 +73,18 @@ func TestRoomlessGroupRecoveryTarget(t *testing.T) {
 	portal.Metadata.(*metaid.PortalMetadata).ThreadType = table.ONE_TO_ONE
 	if _, _, ok = roomlessGroupRecoveryTarget(portal, loginID); ok {
 		t.Fatal("DM must not enter roomless group recovery")
+	}
+}
+
+func TestRoomlessGroupRecoveryReadyEvents(t *testing.T) {
+	if !roomlessGroupRecoveryReadyEvent(&messagix.ConnectedEvent{}) {
+		t.Fatal("initial connection must trigger roomless group recovery")
+	}
+	if !roomlessGroupRecoveryReadyEvent(&messagix.ReconnectedEvent{}) {
+		t.Fatal("persisted-session reconnect must trigger roomless group recovery")
+	}
+	if roomlessGroupRecoveryReadyEvent(&messagix.TransientDisconnectEvent{}) {
+		t.Fatal("disconnect must not trigger roomless group recovery")
 	}
 }
 

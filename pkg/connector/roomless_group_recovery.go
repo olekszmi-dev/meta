@@ -8,10 +8,20 @@ import (
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
+	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
+
+func roomlessGroupRecoveryReadyEvent(evt any) bool {
+	switch evt.(type) {
+	case *messagix.ConnectedEvent, *messagix.ReconnectedEvent:
+		return true
+	default:
+		return false
+	}
+}
 
 func (m *MetaClient) recoverRoomlessGroups(ctx context.Context) {
 	log := zerolog.Ctx(ctx)

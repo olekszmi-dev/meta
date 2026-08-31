@@ -86,7 +86,9 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			log.Debug().Msg("Handling cached initial table")
 			m.parseAndQueueTable(ctx, tbl, true)
 		}
-		go m.recoverRoomlessGroups(ctx)
+		if roomlessGroupRecoveryReadyEvent(evt) {
+			go m.recoverRoomlessGroups(ctx)
+		}
 		// Start thread backfill in background after initial sync
 		go func() {
 			if err := m.StartThreadBackfill(ctx); err != nil {
@@ -110,6 +112,9 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		m.connectWaiter.Set()
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		if roomlessGroupRecoveryReadyEvent(evt) {
+			go m.recoverRoomlessGroups(ctx)
+		}
 	case *messagix.PermanentErrorEvent:
 		// TODO do full reconnect in some cases?
 		m.permanentErrored.Store(true)
