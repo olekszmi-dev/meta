@@ -140,7 +140,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 	}
 }
 
-func (m *MetaClient) parseAndQueueTable(ctx context.Context, tbl *table.LSTable, isInitial bool) {
+func (m *MetaClient) parseAndQueueTable(ctx context.Context, tbl *table.LSTable, isInitial bool) int {
 	evts := m.parseTable(ctx, tbl)
 	wrapped := &parsedTable{
 		Table:     tbl,
@@ -160,6 +160,7 @@ func (m *MetaClient) parseAndQueueTable(ctx context.Context, tbl *table.LSTable,
 			zerolog.Ctx(ctx).Warn().Msg("Context was cancelled before stuck table was dispatched, dropping table")
 		}
 	}
+	return len(evts)
 }
 
 type parsedTable struct {

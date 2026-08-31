@@ -133,6 +133,26 @@ func TestRecoverRoomlessGroupQueuesTask209Response(t *testing.T) {
 	}
 }
 
+func TestRoomlessGroupRecoveryTableCounts(t *testing.T) {
+	response := &table.LSTable{
+		LSDeleteThenInsertThread: []*table.LSDeleteThenInsertThread{{}, {}},
+		LSInsertNewMessageRange:  []*table.LSInsertNewMessageRange{{}},
+		LSIssueNewError:          []*table.LSIssueNewError{{ErrorCode: 42}},
+	}
+	counts := roomlessGroupRecoveryTableCounts(response)
+	if counts["LSDeleteThenInsertThread"] != 2 || counts["LSInsertNewMessageRange"] != 1 || counts["LSIssueNewError"] != 1 {
+		t.Fatalf("unexpected structural counts: %#v", counts)
+	}
+	codes := roomlessGroupRecoveryErrorCodes(response)
+	if len(codes) != 1 || codes[0] != 42 {
+		t.Fatalf("unexpected error codes: %#v", codes)
+	}
+	first := providerTraceHash("thread", "123")
+	if first == "" || first != providerTraceHash("thread", "123") || first == providerTraceHash("thread", "124") {
+		t.Fatal("provider trace hashes must be stable within one process and distinct")
+	}
+}
+
 func TestRoomlessGroupTask228FixtureOneToSeven(t *testing.T) {
 	ctx := zerolog.Nop().WithContext(context.Background())
 	client := &MetaClient{

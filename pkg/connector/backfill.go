@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,9 +136,11 @@ func (m *MetaClient) handleUpdateExistingMessageRange(tk handlerParams, rng *tab
 }
 
 func (m *MetaClient) requestMoreHistory(ctx context.Context, threadID, minTimestampMS int64, minMessageID string) bool {
+	threadHash := providerTraceHash("thread", strconv.FormatInt(threadID, 10))
+	messageHash := providerTraceHash("message", minMessageID)
 	transport := m.getTaskTransport()
 	if transport == nil {
-		zerolog.Ctx(ctx).Warn().Int64("thread_id", threadID).Msg("Cannot request history without a task transport")
+		zerolog.Ctx(ctx).Warn().Str("thread_hash", threadHash).Msg("Cannot request history without a task transport")
 		return false
 	}
 	resp, err := transport.ExecuteTasks(ctx, &socket.FetchMessagesTask{
@@ -148,19 +151,21 @@ func (m *MetaClient) requestMoreHistory(ctx context.Context, threadID, minTimest
 		SyncGroup:            1,
 		Cursor:               transport.GetCursor(1),
 	})
-	zerolog.Ctx(ctx).Trace().
-		Int64("thread_id", threadID).
-		Any("resp_data", resp).
-		Msg("Response data for fetching messages")
 	if err != nil {
-		zerolog.Ctx(ctx).Err(err).Int64("thread_id", threadID).Msg("Failed to request more history")
+		zerolog.Ctx(ctx).Err(err).
+			Str("trace_event", "task_228_error").
+			Str("thread_hash", threadHash).
+			Str("anchor_hash", messageHash).
+			Msg("Failed to request more history")
 		return false
 	} else {
-		zerolog.Ctx(ctx).Debug().
-			Int64("thread_id", threadID).
-			Int64("min_timestamp_ms", minTimestampMS).
-			Str("min_message_id", minMessageID).
-			Msg("Requested more history")
+		zerolog.Ctx(ctx).Info().
+			Str("trace_event", "task_228_response").
+			Str("thread_hash", threadHash).
+			Str("anchor_hash", messageHash).
+			Interface("field_counts", roomlessGroupRecoveryTableCounts(resp)).
+			Interface("error_codes", roomlessGroupRecoveryErrorCodes(resp)).
+			Msg("Processed history page response")
 		return true
 	}
 }
