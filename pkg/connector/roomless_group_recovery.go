@@ -57,11 +57,11 @@ func (m *MetaClient) recoverRoomlessGroups(ctx context.Context) {
 }
 
 func roomlessGroupRecoveryTarget(portal *database.Portal) (*metaid.PortalMetadata, int64, bool) {
-	if portal == nil || portal.MXID != "" || portal.MessageRequest {
+	if portal == nil || portal.MXID != "" || portal.Receiver != "" || portal.MessageRequest {
 		return nil, 0, false
 	}
 	metadata, ok := portal.Metadata.(*metaid.PortalMetadata)
-	if !ok || metadata.ThreadType != table.GROUP_THREAD {
+	if !ok || (metadata.ThreadType != 0 && metadata.ThreadType != table.GROUP_THREAD) {
 		return nil, 0, false
 	}
 	threadID := metaid.ParseFBPortalID(portal.ID)

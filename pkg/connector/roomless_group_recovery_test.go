@@ -73,6 +73,14 @@ func TestRoomlessGroupRecoveryTarget(t *testing.T) {
 	if _, _, ok = roomlessGroupRecoveryTarget(portal); ok {
 		t.Fatal("DM must not enter roomless group recovery")
 	}
+	portal.Metadata.(*metaid.PortalMetadata).ThreadType = 0
+	if _, _, ok = roomlessGroupRecoveryTarget(portal); !ok {
+		t.Fatal("unknown shared portal must enter metadata recovery")
+	}
+	portal.Receiver = networkid.UserLoginID("login")
+	if _, _, ok = roomlessGroupRecoveryTarget(portal); ok {
+		t.Fatal("unknown login-scoped portal must not be treated as a group")
+	}
 }
 
 func TestRoomlessGroupRecoveryReadyEvents(t *testing.T) {
