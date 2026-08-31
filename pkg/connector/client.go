@@ -24,10 +24,16 @@ import (
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
+	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
+
+type taskTransport interface {
+	ExecuteTasks(context.Context, ...socket.Task) (*table.LSTable, error)
+	GetCursor(int64) string
+}
 
 type MetaClient struct {
 	Main      *MetaConnector
@@ -70,6 +76,18 @@ type MetaClient struct {
 	waState   status.BridgeState
 
 	waLastPresence waTypes.Presence
+
+	taskTransport taskTransport
+}
+
+func (m *MetaClient) getTaskTransport() taskTransport {
+	if m.taskTransport != nil {
+		return m.taskTransport
+	}
+	if m.Client == nil {
+		return nil
+	}
+	return m.Client
 }
 
 func (m *MetaConnector) getMessagixConfig() *messagix.Config {

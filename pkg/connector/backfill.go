@@ -135,13 +135,18 @@ func (m *MetaClient) handleUpdateExistingMessageRange(tk handlerParams, rng *tab
 }
 
 func (m *MetaClient) requestMoreHistory(ctx context.Context, threadID, minTimestampMS int64, minMessageID string) bool {
-	resp, err := m.Client.ExecuteTasks(ctx, &socket.FetchMessagesTask{
+	transport := m.getTaskTransport()
+	if transport == nil {
+		zerolog.Ctx(ctx).Warn().Int64("thread_id", threadID).Msg("Cannot request history without a task transport")
+		return false
+	}
+	resp, err := transport.ExecuteTasks(ctx, &socket.FetchMessagesTask{
 		ThreadKey:            threadID,
 		Direction:            0,
 		ReferenceTimestampMs: minTimestampMS,
 		ReferenceMessageId:   minMessageID,
 		SyncGroup:            1,
-		Cursor:               m.Client.GetCursor(1),
+		Cursor:               transport.GetCursor(1),
 	})
 	zerolog.Ctx(ctx).Trace().
 		Int64("thread_id", threadID).

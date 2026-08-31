@@ -86,6 +86,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			log.Debug().Msg("Handling cached initial table")
 			m.parseAndQueueTable(ctx, tbl, true)
 		}
+		go m.recoverRoomlessGroups(ctx)
 		// Start thread backfill in background after initial sync
 		go func() {
 			if err := m.StartThreadBackfill(ctx); err != nil {
