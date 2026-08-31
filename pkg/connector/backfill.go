@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	zerologlog "github.com/rs/zerolog/log"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 
@@ -34,31 +35,28 @@ type BackfillCollector struct {
 	Forward     bool
 	Anchor      *database.Message
 	Done        func()
+	PageCount   int
 }
 
 var globalUpsertCounter atomic.Int64
 
 func (m *MetaClient) handleUpsertMessages(tk handlerParams, upsert *table.UpsertMessages) bridgev2.RemoteEvent {
 	upsertID := globalUpsertCounter.Add(1)
-	log := m.UserLogin.Log.With().
+	log := zerologlog.Logger.With().
 		Str("action", "handle meta upsert").
-		Int64("thread_key", tk.ID).
-		Int64("thread_type", int64(tk.Type)).
+		Str("thread_hash", providerTraceHash("thread", strconv.FormatInt(tk.ID, 10))).
 		Int64("global_upsert_counter", upsertID).
 		Logger()
 	ctx := log.WithContext(tk.ctx)
 	m.backfillLock.Lock()
 	defer m.backfillLock.Unlock()
 	log.Info().
-		Int64("min_timestamp_ms", upsert.Range.MinTimestampMs).
-		Str("min_message_id", upsert.Range.MinMessageId).
-		Int64("max_timestamp_ms", upsert.Range.MaxTimestampMs).
-		Str("max_message_id", upsert.Range.MaxMessageId).
 		Bool("has_more_before", upsert.Range.HasMoreBefore).
 		Bool("has_more_after", upsert.Range.HasMoreAfter).
 		Int("message_count", len(upsert.Messages)).
 		Msg("Received upsert messages")
 	if collector, ok := m.backfillCollectors[tk.ID]; ok {
+		collector.PageCount++
 		if upsert.Range.MaxTimestampMsTemplate > collector.Range.MinTimestampMs {
 			log.Warn().
 				Int64("prev_min_timestamp_ms", collector.Range.MinTimestampMs).
@@ -104,12 +102,10 @@ func (m *MetaClient) handleUpsertMessages(tk handlerParams, upsert *table.Upsert
 }
 
 func (m *MetaClient) handleUpdateExistingMessageRange(tk handlerParams, rng *table.LSUpdateExistingMessageRange) bridgev2.RemoteEvent {
-	logEvt := m.UserLogin.Log.Info().
+	logEvt := zerologlog.Logger.Info().
 		Str("action", "handle meta existing range").
-		Int64("thread_key", tk.ID).
-		Int64("thread_type", int64(tk.Type)).
+		Str("thread_hash", providerTraceHash("thread", strconv.FormatInt(tk.ID, 10))).
 		Int("global_upsert_counter", int(globalUpsertCounter.Add(1))).
-		Int64("timestamp_ms", rng.TimestampMS).
 		Bool("bool2", rng.UnknownBool2).
 		Bool("bool3", rng.UnknownBool3)
 	if collector, ok := m.backfillCollectors[tk.ID]; !ok {
@@ -138,9 +134,10 @@ func (m *MetaClient) handleUpdateExistingMessageRange(tk handlerParams, rng *tab
 func (m *MetaClient) requestMoreHistory(ctx context.Context, threadID, minTimestampMS int64, minMessageID string) bool {
 	threadHash := providerTraceHash("thread", strconv.FormatInt(threadID, 10))
 	messageHash := providerTraceHash("message", minMessageID)
+	log := zerologlog.Logger
 	transport := m.getTaskTransport()
 	if transport == nil {
-		zerolog.Ctx(ctx).Warn().Str("thread_hash", threadHash).Msg("Cannot request history without a task transport")
+		log.Warn().Str("thread_hash", threadHash).Msg("Cannot request history without a task transport")
 		return false
 	}
 	resp, err := transport.ExecuteTasks(ctx, &socket.FetchMessagesTask{
@@ -152,14 +149,14 @@ func (m *MetaClient) requestMoreHistory(ctx context.Context, threadID, minTimest
 		Cursor:               transport.GetCursor(1),
 	})
 	if err != nil {
-		zerolog.Ctx(ctx).Err(err).
+		log.Err(err).
 			Str("trace_event", "task_228_error").
 			Str("thread_hash", threadHash).
 			Str("anchor_hash", messageHash).
 			Msg("Failed to request more history")
 		return false
 	} else {
-		zerolog.Ctx(ctx).Info().
+		log.Info().
 			Str("trace_event", "task_228_response").
 			Str("thread_hash", threadHash).
 			Str("anchor_hash", messageHash).

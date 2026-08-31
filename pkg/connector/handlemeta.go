@@ -89,6 +89,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		if roomlessGroupRecoveryReadyEvent(evt) {
 			go m.recoverRoomlessGroups(ctx)
 		}
+		m.maybeRunLabTask228Probe(ctx)
 		// Start thread backfill in background after initial sync
 		go func() {
 			if err := m.StartThreadBackfill(ctx); err != nil {
@@ -115,6 +116,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		if roomlessGroupRecoveryReadyEvent(evt) {
 			go m.recoverRoomlessGroups(ctx)
 		}
+		m.maybeRunLabTask228Probe(ctx)
 	case *messagix.PermanentErrorEvent:
 		// TODO do full reconnect in some cases?
 		m.permanentErrored.Store(true)
