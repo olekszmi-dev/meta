@@ -6,7 +6,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2/database"
-	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
@@ -29,15 +28,20 @@ func (m *MetaClient) recoverRoomlessGroups(ctx context.Context) {
 		log.Debug().Msg("Skipping roomless group recovery before bridge initialization")
 		return
 	}
-	portals, err := m.Main.Bridge.DB.Portal.GetAll(ctx)
+	userPortals, err := m.Main.Bridge.DB.UserPortal.GetAllForLogin(ctx, m.UserLogin.UserLogin)
 	if err != nil {
-		log.Err(err).Msg("Failed to load portals for roomless group recovery")
+		log.Err(err).Msg("Failed to load login portal mappings for roomless group recovery")
 		return
 	}
 
 	recoveryRequests := 0
-	for _, portal := range portals {
-		metadata, threadID, ok := roomlessGroupRecoveryTarget(portal, m.UserLogin.ID)
+	for _, userPortal := range userPortals {
+		portal, portalErr := m.Main.Bridge.DB.Portal.GetByKey(ctx, userPortal.Portal)
+		if portalErr != nil {
+			log.Warn().Err(portalErr).Msg("Failed to load mapped portal for roomless group recovery")
+			continue
+		}
+		metadata, threadID, ok := roomlessGroupRecoveryTarget(portal)
 		if !ok || metadata.FetchAttempted.Swap(true) {
 			continue
 		}
@@ -52,8 +56,8 @@ func (m *MetaClient) recoverRoomlessGroups(ctx context.Context) {
 	log.Info().Int("recovery_requests", recoveryRequests).Msg("Roomless Messenger group recovery sweep completed")
 }
 
-func roomlessGroupRecoveryTarget(portal *database.Portal, loginID networkid.UserLoginID) (*metaid.PortalMetadata, int64, bool) {
-	if portal == nil || portal.MXID != "" || portal.Receiver != loginID || portal.MessageRequest {
+func roomlessGroupRecoveryTarget(portal *database.Portal) (*metaid.PortalMetadata, int64, bool) {
+	if portal == nil || portal.MXID != "" || portal.MessageRequest {
 		return nil, 0, false
 	}
 	metadata, ok := portal.Metadata.(*metaid.PortalMetadata)

@@ -51,27 +51,26 @@ func (s *scriptedTaskTransport) snapshotTasks() []socket.Task {
 }
 
 func TestRoomlessGroupRecoveryTarget(t *testing.T) {
-	loginID := networkid.UserLoginID("login")
 	portal := &database.Portal{
-		PortalKey: networkid.PortalKey{ID: metaid.MakeFBPortalID(fixtureThreadID), Receiver: loginID},
+		PortalKey: networkid.PortalKey{ID: metaid.MakeFBPortalID(fixtureThreadID)},
 		Metadata:  &metaid.PortalMetadata{ThreadType: table.GROUP_THREAD},
 	}
-	_, threadID, ok := roomlessGroupRecoveryTarget(portal, loginID)
+	_, threadID, ok := roomlessGroupRecoveryTarget(portal)
 	if !ok || threadID != fixtureThreadID {
 		t.Fatalf("expected roomless group target, got ok=%v thread=%d", ok, threadID)
 	}
 	portal.MXID = id.RoomID("!room:example.test")
-	if _, _, ok = roomlessGroupRecoveryTarget(portal, loginID); ok {
+	if _, _, ok = roomlessGroupRecoveryTarget(portal); ok {
 		t.Fatal("portal with a Matrix room must not be recovered again")
 	}
 	portal.MXID = ""
 	portal.MessageRequest = true
-	if _, _, ok = roomlessGroupRecoveryTarget(portal, loginID); ok {
+	if _, _, ok = roomlessGroupRecoveryTarget(portal); ok {
 		t.Fatal("pending group must remain filtered")
 	}
 	portal.MessageRequest = false
 	portal.Metadata.(*metaid.PortalMetadata).ThreadType = table.ONE_TO_ONE
-	if _, _, ok = roomlessGroupRecoveryTarget(portal, loginID); ok {
+	if _, _, ok = roomlessGroupRecoveryTarget(portal); ok {
 		t.Fatal("DM must not enter roomless group recovery")
 	}
 }
