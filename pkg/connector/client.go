@@ -82,6 +82,23 @@ func (m *MetaConnector) getMessagixConfig() *messagix.Config {
 
 func (m *MetaConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
 	loginMetadata := login.Metadata.(*metaid.UserLoginMetadata)
+	if m.ExternalControl != nil {
+		if !m.ExternalControl.OwnsLogin(string(login.ID)) {
+			loginMetadata.Cookies = nil
+			loginMetadata.PushKeys = nil
+		} else {
+			credentials, err := m.ExternalControl.LoadCredentials(ctx, string(login.ID))
+			if err != nil {
+				return fmt.Errorf("failed to load external credentials: %w", err)
+			}
+			loginMetadata.Platform = credentials.Credentials.Platform
+			loginMetadata.Cookies = hydrateCookies(credentials.Credentials.Platform, credentials.Credentials.Cookies)
+			loginMetadata.LoginUA = credentials.Credentials.LoginUA
+			loginMetadata.PushKeys = credentials.Credentials.PushSecrets
+			loginMetadata.CredentialRef = credentials.AccountID
+			loginMetadata.CredentialGeneration = credentials.CredentialGeneration
+		}
+	}
 	c := &MetaClient{
 		Main:      m,
 		LoginMeta: loginMetadata,
@@ -98,6 +115,29 @@ func (m *MetaConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserL
 	c.editChannels = exsync.NewMap[string, chan *FBEditEvent]()
 	login.Client = c
 	return nil
+}
+
+func (m *MetaClient) persistExternalCredentials(ctx context.Context) {
+	if m.Main.ExternalControl == nil || m.Client == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
+		return
+	}
+	generation, err := m.Main.ExternalControl.StoreCredentials(
+		ctx,
+		string(m.UserLogin.ID),
+		m.LoginMeta.Platform,
+		m.Client.GetCookies(),
+		m.LoginMeta.LoginUA,
+		m.LoginMeta.PushKeys,
+	)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to persist rotated external credentials")
+		return
+	}
+	m.LoginMeta.CredentialRef = m.Main.ExternalControl.AccountID
+	m.LoginMeta.CredentialGeneration = generation
+	if err = m.UserLogin.Save(ctx); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to persist external credential generation")
+	}
 }
 
 var (
@@ -521,6 +561,7 @@ func (m *MetaClient) saveConnectionState(ctx context.Context, state json.RawMess
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to save reconnection state")
 	} else {
 		zerolog.Ctx(ctx).Debug().Msg("Saved reconnection state")
+		m.persistExternalCredentials(ctx)
 	}
 }
 

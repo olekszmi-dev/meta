@@ -226,17 +226,29 @@ func loginWithCookies(
 		loginUA = req.Header.Get("User-Agent")
 	}
 
+	loginMetadata := &metaid.UserLoginMetadata{
+		Platform: c.Platform,
+		Cookies:  c,
+		LoginUA:  loginUA,
+	}
+	if conn.ExternalControl != nil && conn.ExternalControl.OwnsLogin(string(loginID)) {
+		generation, storeErr := conn.ExternalControl.StoreCredentials(
+			ctx, string(loginID), c.Platform, c, loginUA, nil,
+		)
+		if storeErr != nil {
+			return nil, fmt.Errorf("failed to store external login credentials: %w", storeErr)
+		}
+		loginMetadata.CredentialRef = conn.ExternalControl.AccountID
+		loginMetadata.CredentialGeneration = generation
+	}
+
 	ul, err := bridgeUser.NewLogin(ctx, &database.UserLogin{
 		ID:         loginID,
 		RemoteName: user.GetName(),
 		RemoteProfile: status.RemoteProfile{
 			Name: user.GetName(),
 		},
-		Metadata: &metaid.UserLoginMetadata{
-			Platform: c.Platform,
-			Cookies:  c,
-			LoginUA:  loginUA,
-		},
+		Metadata: loginMetadata,
 	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save new login: %w", err)
