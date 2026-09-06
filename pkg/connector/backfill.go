@@ -329,6 +329,10 @@ func (m *MetaClient) wrapBackfillEvents(ctx context.Context, portal *bridgev2.Po
 			})
 		}
 	}
+	if err := m.emitExternalHistoryPage(ctx, portal, upsert); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to persist external history page before Matrix backfill")
+		return &bridgev2.FetchMessagesResponse{HasMore: true}
+	}
 	wrappedMessages := make([]*bridgev2.BackfillMessage, len(upsert.Messages))
 	for i, msg := range upsert.Messages {
 		m.handleSubthread(ctx, msg)

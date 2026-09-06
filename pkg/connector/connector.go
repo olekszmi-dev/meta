@@ -14,11 +14,12 @@ import (
 )
 
 type MetaConnector struct {
-	Bridge      *bridgev2.Bridge
-	Config      Config
-	MsgConv     *msgconv.MessageConverter
-	DeviceStore *sqlstore.Container
-	DB          *metadb.MetaDB
+	Bridge          *bridgev2.Bridge
+	Config          Config
+	MsgConv         *msgconv.MessageConverter
+	DeviceStore     *sqlstore.Container
+	DB              *metadb.MetaDB
+	ExternalControl *ExternalControlClient
 }
 
 var (
@@ -38,6 +39,7 @@ func (m *MetaConnector) Init(bridge *bridgev2.Bridge) {
 	m.DB = metadb.New(bridge.ID, bridge.DB.Database, m.Bridge.Log.With().Str("db_section", "meta").Logger())
 	m.MsgConv = msgconv.New(bridge, m.DB)
 	m.MsgConv.DisableViewOnce = m.Config.DisableViewOnce
+	m.ExternalControl = NewExternalControlClientFromEnv()
 }
 
 func (m *MetaConnector) Start(ctx context.Context) error {
@@ -49,6 +51,9 @@ func (m *MetaConnector) Start(ctx context.Context) error {
 	err = m.DB.Upgrade(ctx)
 	if err != nil {
 		return bridgev2.DBUpgradeError{Err: err, Section: "meta"}
+	}
+	if m.ExternalControl != nil {
+		go m.runExternalCommandLoop(ctx)
 	}
 	return nil
 }

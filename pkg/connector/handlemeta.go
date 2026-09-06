@@ -82,6 +82,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		go m.tryConnectE2EE(false)
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		m.emitExternalHealth(ctx, "live", "healthy", "")
 		if tbl := m.initialTable.Swap(nil); tbl != nil {
 			log.Debug().Msg("Handling cached initial table")
 			m.parseAndQueueTable(ctx, tbl, true)
@@ -90,8 +91,12 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		go func() {
 			if err := m.StartThreadBackfill(ctx); err != nil {
 				log.Err(err).Msg("Thread backfill failed")
+				m.emitExternalHealth(ctx, "history", "degraded", err.Error())
+			} else {
+				m.emitExternalHealth(ctx, "history", "healthy", "")
 			}
 		}()
+		go m.recoverRoomlessGroupPortals(ctx)
 	case *messagix.TransientDisconnectEvent:
 		log.Debug().Err(evt.Err).Msg("Disconnected from Meta socket")
 		m.connectWaiter.Clear()
@@ -100,6 +105,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			Error:      MetaTransientDisconnect,
 		}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		m.emitExternalHealth(ctx, "live", "degraded", evt.Err.Error())
 	case *messagix.ReconnectedEvent:
 		if !m.firstE2EEConnectDone {
 			m.firstE2EEConnectDone = true
@@ -109,6 +115,8 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		m.connectWaiter.Set()
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		m.emitExternalHealth(ctx, "live", "healthy", "")
+		go m.recoverRoomlessGroupPortals(ctx)
 	case *messagix.PermanentErrorEvent:
 		// TODO do full reconnect in some cases?
 		m.permanentErrored.Store(true)
@@ -126,6 +134,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			}
 		}
 		m.UserLogin.BridgeState.Send(m.metaState)
+		m.emitExternalHealth(ctx, "live", "disconnected", evt.Err.Error())
 		if stopPeriodicReconnect := m.stopPeriodicReconnect.Swap(nil); stopPeriodicReconnect != nil {
 			(*stopPeriodicReconnect)()
 		}
@@ -201,6 +210,12 @@ func (m *MetaClient) handleParsedTable(ctx context.Context, isInitial bool, tbl 
 	for _, evt := range innerQueue {
 		if ctx.Err() != nil {
 			return
+		}
+		if message, ok := evt.(*FBMessageEvent); ok {
+			if err := m.emitExternalMessage(ctx, "mautrix_live", message.WrappedMessage); err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to persist external live message before Matrix dispatch")
+				return
+			}
 		}
 		res := m.UserLogin.QueueRemoteEvent(evt)
 		if !res.Success {

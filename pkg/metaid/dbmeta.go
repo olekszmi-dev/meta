@@ -40,15 +40,61 @@ type GhostMetadata struct {
 }
 
 type UserLoginMetadata struct {
-	Platform   types.Platform       `json:"platform"`
-	Cookies    *cookies.Cookies     `json:"cookies"`
-	WADeviceID uint16               `json:"wa_device_id,omitempty"`
-	PushKeys   *pushcrypto.PushKeys `json:"push_keys,omitempty"`
-	LoginUA    string               `json:"login_ua,omitempty"`
-	IGID       string               `json:"igid,omitempty"`
+	Platform             types.Platform       `json:"platform"`
+	Cookies              *cookies.Cookies     `json:"-"`
+	WADeviceID           uint16               `json:"wa_device_id,omitempty"`
+	PushKeys             *pushcrypto.PushKeys `json:"-"`
+	LoginUA              string               `json:"login_ua,omitempty"`
+	IGID                 string               `json:"igid,omitempty"`
+	CredentialRef        string               `json:"credential_ref,omitempty"`
+	CredentialGeneration uint64               `json:"credential_generation,omitempty"`
 
 	// Thread backfill state
 	BackfillCompleted bool `json:"backfill_completed,omitempty"`
+}
+
+type persistedUserLoginMetadata struct {
+	Platform             types.Platform       `json:"platform"`
+	Cookies              *cookies.Cookies     `json:"cookies,omitempty"`
+	WADeviceID           uint16               `json:"wa_device_id,omitempty"`
+	PushKeys             *pushcrypto.PushKeys `json:"push_keys,omitempty"`
+	LoginUA              string               `json:"login_ua,omitempty"`
+	IGID                 string               `json:"igid,omitempty"`
+	CredentialRef        string               `json:"credential_ref,omitempty"`
+	CredentialGeneration uint64               `json:"credential_generation,omitempty"`
+	BackfillCompleted    bool                 `json:"backfill_completed,omitempty"`
+}
+
+func (m UserLoginMetadata) MarshalJSON() ([]byte, error) {
+	disk := persistedUserLoginMetadata{
+		Platform: m.Platform, WADeviceID: m.WADeviceID, LoginUA: m.LoginUA, IGID: m.IGID,
+		CredentialRef: m.CredentialRef, CredentialGeneration: m.CredentialGeneration,
+		BackfillCompleted: m.BackfillCompleted,
+	}
+	// Legacy installations remain readable. Once an external credential
+	// reference exists, secrets are never serialized back into user_login.
+	if m.CredentialRef == "" {
+		disk.Cookies = m.Cookies
+		disk.PushKeys = m.PushKeys
+	}
+	return json.Marshal(disk)
+}
+
+func (m *UserLoginMetadata) UnmarshalJSON(data []byte) error {
+	var disk persistedUserLoginMetadata
+	if err := json.Unmarshal(data, &disk); err != nil {
+		return err
+	}
+	m.Platform = disk.Platform
+	m.Cookies = disk.Cookies
+	m.WADeviceID = disk.WADeviceID
+	m.PushKeys = disk.PushKeys
+	m.LoginUA = disk.LoginUA
+	m.IGID = disk.IGID
+	m.CredentialRef = disk.CredentialRef
+	m.CredentialGeneration = disk.CredentialGeneration
+	m.BackfillCompleted = disk.BackfillCompleted
+	return nil
 }
 
 func (m *UserLoginMetadata) GeneratePushKeys() {
