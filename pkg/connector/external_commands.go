@@ -34,6 +34,28 @@ func int64Payload(payload map[string]any, key string) int64 {
 	return value
 }
 
+func externalSendResult(response *table.LSTable, otid int64) map[string]any {
+	if response == nil {
+		return map[string]any{"ok": false, "error": "provider_receipt_missing_nil_response"}
+	}
+	if len(response.LSIssueNewError) > 0 {
+		return map[string]any{"ok": false, "error": "provider_rejected_send"}
+	}
+	if len(response.LSMarkOptimisticMessageFailed) > 0 {
+		return map[string]any{"ok": false, "error": "provider_rejected_optimistic_send"}
+	}
+	if len(response.LSHandleFailedTask) > 0 {
+		return map[string]any{"ok": false, "error": "provider_failed_send_task"}
+	}
+	otidString := strconv.FormatInt(otid, 10)
+	for _, replacement := range response.LSReplaceOptimsiticMessage {
+		if replacement.OfflineThreadingId == otidString && replacement.MessageId != "" {
+			return map[string]any{"ok": true, "providerConfirmed": true, "externalRef": replacement.MessageId}
+		}
+	}
+	return map[string]any{"ok": false, "error": "provider_receipt_missing_replacement"}
+}
+
 func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *externalCommand) map[string]any {
 	client := m.selectedExternalClient()
 	if client == nil {
@@ -80,20 +102,7 @@ func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *ext
 		if err != nil {
 			return map[string]any{"ok": false, "error": "provider_send_failed"}
 		}
-		externalRef := ""
-		if response != nil {
-			otidString := strconv.FormatInt(otid, 10)
-			for _, replacement := range response.LSReplaceOptimsiticMessage {
-				if replacement.OfflineThreadingId == otidString {
-					externalRef = replacement.MessageId
-					break
-				}
-			}
-		}
-		if externalRef == "" {
-			return map[string]any{"ok": false, "error": "provider_receipt_missing"}
-		}
-		return map[string]any{"ok": true, "providerConfirmed": true, "externalRef": externalRef}
+		return externalSendResult(response, otid)
 	case "pin_restore":
 		return map[string]any{"ok": false, "error": "pin_restore_not_available_in_mautrix_worker"}
 	default:
