@@ -50,6 +50,8 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mattn/go-sqlite3 v1.14.49 h1:B8jBHC3xhxZgxztrgruTuLucebnULQnx4W7cF7SAE9w=
 github.com/mattn/go-sqlite3 v1.14.49/go.mod h1:6JTjA44L93a0QCyJef5YvlPoKXntQPjzWv5gtm9sB6w=
+github.com/olekszmi-dev/go-util v0.10.1-0.20260907082859-15a53bddf0ea h1:G9eDXMK/ZwBsWjw3s65k78o/3HTsdRSEnt9wVV5b9oQ=
+github.com/olekszmi-dev/go-util v0.10.1-0.20260907082859-15a53bddf0ea/go.mod h1:z0ZZNt4hq3FZbUKnunexE/QscCx7VkLvQSvtggc/aE8=
 github.com/petermattis/goid v0.0.0-20260816044145-ed329add6b1b h1:sS7HLzwS+dO+gxATgQfeZDEdUZe2pKAB3nGoUwP5zU0=
 github.com/petermattis/goid v0.0.0-20260816044145-ed329add6b1b/go.mod h1:pxMtw7cyUw6B2bRH0ZBANSPg+AoSud1I1iyJHI69jH4=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
@@ -94,8 +96,6 @@ github.com/zyedidia/clipboard v1.0.4 h1:r6GUQOyPtIaApRLeD56/U+2uJbXis6ANGbKWCljU
 github.com/zyedidia/clipboard v1.0.4/go.mod h1:zykFnZUXX0ErxqvYLUFEq7QDJKId8rmh2FgD0/Y8cjA=
 go.mau.fi/libsignal v0.2.2 h1:QV+XdzQkm3x3aSG7FcqfGSZuFXz83pRZPBFaPygHbOU=
 go.mau.fi/libsignal v0.2.2/go.mod h1:CRlIQg2J8uYTfDFvNoO8/KcZjs5cey0vbc6oj/bssY0=
-go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde h1:eMHY9dMDkNuDMWhfTbMZHbbsxj7G6mfujjKei1HaFQM=
-go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde/go.mod h1:z0ZZNt4hq3FZbUKnunexE/QscCx7VkLvQSvtggc/aE8=
 go.mau.fi/whatsmeow v0.0.0-20260816113502-fb386f152837 h1:xJ13dqFcK/oPNImltlk7sumI/uiQ9EON/6g/iwpT1Nc=
 go.mau.fi/whatsmeow v0.0.0-20260816113502-fb386f152837/go.mod h1:UFP0D7aj+biuFejsllcoNiHTQorh0ODFUyG4Txpqfks=
 go.mau.fi/zeroconfig v0.2.0 h1:e/OGEERqVRRKlgaro7E6bh8xXiKFSXB3eNNIud7FUjU=
