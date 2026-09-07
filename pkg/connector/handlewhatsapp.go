@@ -32,8 +32,13 @@ func (m *MetaClient) e2eeEventHandler(rawEvt any) bool {
 			Any("ig_transport", evt.IGTransport).
 			Any("payload", evt.Message).
 			Msg("Received WhatsApp message")
+		wrapped := &WAMessageEvent{FBMessage: evt, m: m}
+		if err := m.emitExternalE2EEMessage(m.Main.Bridge.BackgroundCtx, wrapped); err != nil {
+			log.Err(err).Msg("Failed to persist external encrypted live message before Matrix dispatch")
+			return false
+		}
 		m.Main.Bridge.QueueRemoteEvent(m.UserLogin, &EnsureWAChatStateEvent{JID: evt.Info.Chat, m: m})
-		return m.Main.Bridge.QueueRemoteEvent(m.UserLogin, &WAMessageEvent{FBMessage: evt, m: m}).Success
+		return m.Main.Bridge.QueueRemoteEvent(m.UserLogin, wrapped).Success
 	case *events.ChatPresence:
 		m.handleWAChatPresence(m.Main.Bridge.BackgroundCtx, evt)
 	case *events.Receipt:

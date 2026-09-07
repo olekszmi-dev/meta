@@ -8,6 +8,8 @@ import (
 
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/metaid"
+	"go.mau.fi/whatsmeow/proto/waArmadilloApplication"
+	"go.mau.fi/whatsmeow/proto/waConsumerApplication"
 	"maunium.net/go/mautrix/bridgev2"
 )
 
@@ -90,6 +92,142 @@ func (m *MetaClient) emitExternalMessage(ctx context.Context, source string, msg
 		"payload": map[string]any{
 			"threadId": threadID,
 			"message":  m.externalMessage(msg),
+		},
+	})
+}
+
+func externalE2EEText(evt *WAMessageEvent) string {
+	switch msg := evt.Message.(type) {
+	case *waConsumerApplication.ConsumerApplication:
+		content := msg.GetPayload().GetContent()
+		if text := content.GetMessageText(); text != nil {
+			return text.GetText()
+		}
+		if text := content.GetExtendedTextMessage(); text != nil {
+			return text.GetText().GetText()
+		}
+		if edit := content.GetEditMessage(); edit != nil {
+			return edit.GetMessage().GetText()
+		}
+	case *waArmadilloApplication.Armadillo:
+		if content := msg.GetPayload().GetContent().GetExtendedContentMessage(); content != nil {
+			return content.GetMessageText()
+		}
+	}
+	return ""
+}
+
+func externalE2EEHasMedia(evt *WAMessageEvent) bool {
+	switch msg := evt.Message.(type) {
+	case *waConsumerApplication.ConsumerApplication:
+		content := msg.GetPayload().GetContent()
+		return content.GetImageMessage() != nil ||
+			content.GetStickerMessage() != nil ||
+			content.GetViewOnceMessage() != nil ||
+			content.GetDocumentMessage() != nil ||
+			content.GetAudioMessage() != nil ||
+			content.GetVideoMessage() != nil
+	case *waArmadilloApplication.Armadillo:
+		content := msg.GetPayload().GetContent()
+		return content.GetCommonSticker() != nil ||
+			content.GetRavenMessage() != nil ||
+			content.GetRavenMessageMsgr() != nil ||
+			content.GetImageGalleryMessage() != nil
+	default:
+		return false
+	}
+}
+
+func externalE2EETargetID(evt *WAMessageEvent) string {
+	msg, ok := evt.Message.(*waConsumerApplication.ConsumerApplication)
+	if !ok {
+		return ""
+	}
+	payload := msg.GetPayload()
+	if content := payload.GetContent(); content != nil {
+		if edit := content.GetEditMessage(); edit != nil {
+			return edit.GetKey().GetID()
+		}
+		if reaction := content.GetReactionMessage(); reaction != nil {
+			return reaction.GetKey().GetID()
+		}
+	}
+	if application := payload.GetApplicationData(); application != nil {
+		return application.GetRevoke().GetKey().GetID()
+	}
+	return ""
+}
+
+func externalE2EEMessageData(evt *WAMessageEvent) (eventType string, message map[string]any) {
+	eventType = "message.upsert"
+	kind := "text"
+	message = map[string]any{
+		"kind":              kind,
+		"providerMessageId": evt.Info.ID,
+		"senderId":          evt.Info.Sender.String(),
+		"senderName":        evt.Info.PushName,
+		"timestamp":         evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
+		"direction":         map[bool]string{true: "outbound", false: "inbound"}[evt.Info.IsFromMe],
+		"text":              externalE2EEText(evt),
+	}
+	if externalE2EEHasMedia(evt) {
+		kind = "media"
+		message["media"] = []map[string]any{{
+			"durableRef": fmt.Sprintf("mautrix_e2ee:%s:%s", evt.Info.Chat.String(), evt.Info.ID),
+		}}
+	}
+	if quoted := evt.FBApplication.GetMetadata().GetQuotedMessage(); quoted != nil && quoted.GetStanzaID() != "" {
+		message["replyToAliases"] = []map[string]string{{"namespace": "meta_message_id", "id": quoted.GetStanzaID()}}
+	}
+	switch evt.GetType() {
+	case bridgev2.RemoteEventEdit:
+		eventType = "message.edit"
+		kind = "edit"
+		if target := externalE2EETargetID(evt); target != "" {
+			message["editOfAliases"] = []map[string]string{{"namespace": "meta_message_id", "id": target}}
+		}
+	case bridgev2.RemoteEventReaction, bridgev2.RemoteEventReactionRemove:
+		eventType = "message.reaction"
+		kind = "reaction"
+		reaction, _ := evt.GetReactionEmoji()
+		message["text"] = ""
+		if reaction != "" {
+			message["reactions"] = []map[string]string{{"senderId": evt.Info.Sender.String(), "reaction": reaction}}
+		} else {
+			kind = "redaction"
+			eventType = "message.redaction"
+		}
+		if target := externalE2EETargetID(evt); target != "" {
+			message["replyToAliases"] = []map[string]string{{"namespace": "meta_message_id", "id": target}}
+		}
+	case bridgev2.RemoteEventMessageRemove:
+		eventType = "message.redaction"
+		kind = "redaction"
+		message["text"] = ""
+		if target := externalE2EETargetID(evt); target != "" {
+			message["replyToAliases"] = []map[string]string{{"namespace": "meta_message_id", "id": target}}
+		}
+	}
+	message["kind"] = kind
+	if kind == "text" && message["text"] == "" {
+		message["kind"] = "system"
+	}
+	return eventType, message
+}
+
+func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessageEvent) error {
+	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
+		return nil
+	}
+	eventType, message := externalE2EEMessageData(evt)
+	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":    fmt.Sprintf("mautrix_live_e2ee:%s:%s", evt.Info.Chat.String(), evt.Info.ID),
+		"eventType":  eventType,
+		"source":     "mautrix_live",
+		"occurredAt": evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
+		"payload": map[string]any{
+			"threadId": evt.Info.Chat.String(),
+			"message":  message,
 		},
 	})
 }
