@@ -215,6 +215,13 @@ func externalE2EEMessageData(evt *WAMessageEvent) (eventType string, message map
 	return eventType, message
 }
 
+func externalE2EEThreadData(evt *WAMessageEvent) map[string]any {
+	return map[string]any{
+		"threadId": evt.Info.Chat.String(),
+		"isGroup":  evt.Info.IsGroup,
+	}
+}
+
 func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessageEvent) error {
 	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
 		return nil
@@ -226,8 +233,8 @@ func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessage
 		"source":     "mautrix_live",
 		"occurredAt": evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
-			"threadId": evt.Info.Chat.String(),
-			"message":  message,
+			"thread":  externalE2EEThreadData(evt),
+			"message": message,
 		},
 	})
 }
