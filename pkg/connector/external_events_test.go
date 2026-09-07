@@ -77,3 +77,17 @@ func TestExternalE2EEThreadDataPreservesGroupMarker(t *testing.T) {
 		t.Fatalf("isGroup: got %v, want true", thread["isGroup"])
 	}
 }
+
+func TestExternalE2EEThreadDataClassifiesVestaGroupKey(t *testing.T) {
+	evt := &WAMessageEvent{FBMessage: &events.FBMessage{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat:    types.NewJID("123", ""),
+			IsGroup: false,
+		}},
+	}}
+
+	thread := externalE2EEThreadData(evt)
+	if thread["isGroup"] != true {
+		t.Fatalf("isGroup: got %v, want true", thread["isGroup"])
+	}
+}
