@@ -62,32 +62,16 @@ func TestExternalE2EEMessageDataText(t *testing.T) {
 }
 
 func TestExternalE2EEThreadDataPreservesGroupMarker(t *testing.T) {
-	evt := &WAMessageEvent{FBMessage: &events.FBMessage{
-		Info: types.MessageInfo{MessageSource: types.MessageSource{
-			Chat:    types.NewJID("123", types.GroupServer),
-			IsGroup: true,
-		}},
-	}}
-
-	thread := externalE2EEThreadData(evt)
-	if thread["threadId"] != evt.Info.Chat.String() {
-		t.Fatalf("threadId: got %v, want %v", thread["threadId"], evt.Info.Chat.String())
-	}
-	if thread["isGroup"] != true {
-		t.Fatalf("isGroup: got %v, want true", thread["isGroup"])
+	if !externalE2EEIsGroup(true, "login") {
+		t.Fatal("explicit group marker must be preserved")
 	}
 }
 
 func TestExternalE2EEThreadDataClassifiesVestaGroupKey(t *testing.T) {
-	evt := &WAMessageEvent{FBMessage: &events.FBMessage{
-		Info: types.MessageInfo{MessageSource: types.MessageSource{
-			Chat:    types.NewJID("123", ""),
-			IsGroup: false,
-		}},
-	}}
-
-	thread := externalE2EEThreadData(evt)
-	if thread["isGroup"] != true {
-		t.Fatalf("isGroup: got %v, want true", thread["isGroup"])
+	if !externalE2EEIsGroup(false, "") {
+		t.Fatal("shared Vesta portal must be classified as a group")
+	}
+	if externalE2EEIsGroup(false, "login") {
+		t.Fatal("per-user portal must remain a direct conversation")
 	}
 }

@@ -10,8 +10,8 @@ import (
 	"go.mau.fi/mautrix-meta/pkg/metaid"
 	"go.mau.fi/whatsmeow/proto/waArmadilloApplication"
 	"go.mau.fi/whatsmeow/proto/waConsumerApplication"
-	"go.mau.fi/whatsmeow/types"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 )
 
 func externalMedia(msg *table.WrappedMessage) []map[string]any {
@@ -216,12 +216,15 @@ func externalE2EEMessageData(evt *WAMessageEvent) (eventType string, message map
 	return eventType, message
 }
 
+func externalE2EEIsGroup(explicit bool, portalReceiver networkid.UserLoginID) bool {
+	return explicit || portalReceiver == ""
+}
+
 func externalE2EEThreadData(evt *WAMessageEvent) map[string]any {
-	server := evt.Info.Chat.Server
-	isGroup := evt.Info.IsGroup || (evt.Info.Chat.User != "" && server != types.MessengerServer && server != types.DefaultUserServer)
+	portalKey := evt.GetPortalKey()
 	return map[string]any{
 		"threadId": evt.Info.Chat.String(),
-		"isGroup":  isGroup,
+		"isGroup":  externalE2EEIsGroup(evt.Info.IsGroup, portalKey.Receiver),
 	}
 }
 
