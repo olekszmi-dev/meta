@@ -63,3 +63,5 @@ require (
 )
 
 replace github.com/imroc/req/v3 => github.com/beeper/req/v3 v3.0.0-20260808092153-100cef0a2fbd
+
+replace go.mau.fi/util => github.com/olekszmi-dev/go-util v0.10.1-0.20260907082859-15a53bddf0ea
