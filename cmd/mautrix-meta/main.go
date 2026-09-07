@@ -1,21 +1,12 @@
 package main
 
 import (
-	"os"
-
 	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
 
 	"go.mau.fi/mautrix-meta/pkg/connector"
 )
 
 const defaultDatabaseOwner = "megabridge/mautrix-meta"
-
-func databaseOwner() string {
-	if os.Getenv("MAUTRIX_META_PREPROVISIONED_DATABASE") == "1" {
-		return ""
-	}
-	return defaultDatabaseOwner
-}
 
 // Information to find out exactly which commit the bridge was built from.
 // These are filled at build time with the -X linker flag.
@@ -27,7 +18,7 @@ var (
 
 var m = mxmain.BridgeMain{
 	Name:        "mautrix-facebook",
-	DBOwner:     databaseOwner(),
+	DBOwner:     defaultDatabaseOwner,
 	URL:         "https://github.com/mautrix/meta",
 	Description: "A Matrix-Facebook Messenger puppeting bridge.",
 	Version:     "26.08",
