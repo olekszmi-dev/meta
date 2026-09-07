@@ -60,3 +60,20 @@ func TestExternalE2EEMessageDataText(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalE2EEThreadDataPreservesGroupMarker(t *testing.T) {
+	evt := &WAMessageEvent{FBMessage: &events.FBMessage{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat:    types.NewJID("123", types.GroupServer),
+			IsGroup: true,
+		}},
+	}}
+
+	thread := externalE2EEThreadData(evt)
+	if thread["threadId"] != evt.Info.Chat.String() {
+		t.Fatalf("threadId: got %v, want %v", thread["threadId"], evt.Info.Chat.String())
+	}
+	if thread["isGroup"] != true {
+		t.Fatalf("isGroup: got %v, want true", thread["isGroup"])
+	}
+}
