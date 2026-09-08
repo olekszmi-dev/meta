@@ -80,19 +80,21 @@ func (m *MetaClient) externalMessage(msg *table.WrappedMessage) map[string]any {
 	}
 }
 
-func (m *MetaClient) emitExternalMessage(ctx context.Context, source string, msg *table.WrappedMessage) error {
+func (m *MetaClient) emitExternalMessage(ctx context.Context, source string, evt *FBMessageEvent) error {
 	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
 		return nil
 	}
+	msg := evt.WrappedMessage
 	threadID := strconv.FormatInt(msg.ThreadKey, 10)
+	portalKey := evt.GetPortalKey()
 	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
 		"eventId":    fmt.Sprintf("%s:%s", source, msg.MessageId),
 		"eventType":  "message.upsert",
 		"source":     source,
 		"occurredAt": time.UnixMilli(msg.TimestampMs).UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
-			"threadId": threadID,
-			"message":  m.externalMessage(msg),
+			"thread":  externalThreadData(threadID, false, portalKey, m.externalPortalThreadType(ctx, portalKey)),
+			"message": m.externalMessage(msg),
 		},
 	})
 }
@@ -249,22 +251,28 @@ func externalE2EEPortalLookupKeys(portalKey networkid.PortalKey) []networkid.Por
 	return keys
 }
 
-func (m *MetaClient) externalE2EEThreadData(ctx context.Context, evt *WAMessageEvent) map[string]any {
-	portalKey := evt.GetPortalKey()
-	threadType := table.UNKNOWN_THREAD_TYPE
+func (m *MetaClient) externalPortalThreadType(ctx context.Context, portalKey networkid.PortalKey) table.ThreadType {
 	for _, lookupKey := range externalE2EEPortalLookupKeys(portalKey) {
 		portal, err := m.Main.Bridge.GetExistingPortalByKey(ctx, lookupKey)
 		if err == nil && portal != nil {
-			if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
-				threadType = metadata.ThreadType
+			if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok && metadata.ThreadType != table.UNKNOWN_THREAD_TYPE {
+				return metadata.ThreadType
 			}
-			break
 		}
 	}
+	return table.UNKNOWN_THREAD_TYPE
+}
+
+func externalThreadData(threadID string, explicitGroup bool, portalKey networkid.PortalKey, threadType table.ThreadType) map[string]any {
 	return map[string]any{
-		"threadId": evt.Info.Chat.String(),
-		"isGroup":  externalE2EEIsGroup(evt.Info.IsGroup, portalKey.Receiver, threadType),
+		"threadId": threadID,
+		"isGroup":  externalE2EEIsGroup(explicitGroup, portalKey.Receiver, threadType),
 	}
+}
+
+func (m *MetaClient) externalE2EEThreadData(ctx context.Context, evt *WAMessageEvent) map[string]any {
+	portalKey := evt.GetPortalKey()
+	return externalThreadData(evt.Info.Chat.String(), evt.Info.IsGroup, portalKey, m.externalPortalThreadType(ctx, portalKey))
 }
 
 func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessageEvent) error {
