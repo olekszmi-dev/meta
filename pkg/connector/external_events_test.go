@@ -10,6 +10,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 )
 
 func TestExternalE2EEMessageDataText(t *testing.T) {
@@ -83,5 +84,22 @@ func TestExternalE2EEThreadDataUsesPersistedGroupType(t *testing.T) {
 	}
 	if externalE2EEIsGroup(false, "login", table.ONE_TO_ONE) {
 		t.Fatal("persisted Messenger one-to-one type must remain a direct conversation")
+	}
+}
+
+func TestExternalE2EEPortalLookupKeysFallsBackToSharedPortal(t *testing.T) {
+	portalKey := networkid.PortalKey{ID: "group", Receiver: "login"}
+	keys := externalE2EEPortalLookupKeys(portalKey)
+	if len(keys) != 2 || keys[0] != portalKey {
+		t.Fatalf("expected scoped portal first, got %#v", keys)
+	}
+	if keys[1].ID != portalKey.ID || keys[1].Receiver != "" {
+		t.Fatalf("expected shared portal fallback, got %#v", keys[1])
+	}
+
+	sharedKey := networkid.PortalKey{ID: "group"}
+	keys = externalE2EEPortalLookupKeys(sharedKey)
+	if len(keys) != 1 || keys[0] != sharedKey {
+		t.Fatalf("shared portal must not be duplicated, got %#v", keys)
 	}
 }

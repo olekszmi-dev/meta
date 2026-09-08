@@ -239,13 +239,26 @@ func externalE2EEIsGroup(explicit bool, portalReceiver networkid.UserLoginID, th
 	return explicit || externalThreadTypeIsGroup(threadType) || portalReceiver == ""
 }
 
+func externalE2EEPortalLookupKeys(portalKey networkid.PortalKey) []networkid.PortalKey {
+	keys := []networkid.PortalKey{portalKey}
+	if portalKey.Receiver != "" {
+		sharedKey := portalKey
+		sharedKey.Receiver = ""
+		keys = append(keys, sharedKey)
+	}
+	return keys
+}
+
 func (m *MetaClient) externalE2EEThreadData(ctx context.Context, evt *WAMessageEvent) map[string]any {
 	portalKey := evt.GetPortalKey()
 	threadType := table.UNKNOWN_THREAD_TYPE
-	portal, err := m.Main.Bridge.GetExistingPortalByKey(ctx, portalKey)
-	if err == nil && portal != nil {
-		if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
-			threadType = metadata.ThreadType
+	for _, lookupKey := range externalE2EEPortalLookupKeys(portalKey) {
+		portal, err := m.Main.Bridge.GetExistingPortalByKey(ctx, lookupKey)
+		if err == nil && portal != nil {
+			if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
+				threadType = metadata.ThreadType
+			}
+			break
 		}
 	}
 	return map[string]any{
