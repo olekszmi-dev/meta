@@ -50,6 +50,16 @@ func (m *MetaClient) runThreadBackfill(ctx context.Context) error {
 		}
 
 		batchCount++
+		minThreadKey := int64(0)
+		hasMoreBefore := false
+		if keyStore != nil {
+			minThreadKey = keyStore.MinThreadKey
+			hasMoreBefore = keyStore.HasMoreBefore
+		}
+		if err := m.emitExternalDiscoveryPage(ctx, batchCount, minThreadKey, hasMoreBefore); err != nil {
+			log.Err(err).Int("batch", batchCount).Msg("Failed to persist external task 209 discovery checkpoint")
+			return err
+		}
 
 		// Process received threads (handled via normal event flow)
 		m.parseAndQueueTable(ctx, tbl, false)

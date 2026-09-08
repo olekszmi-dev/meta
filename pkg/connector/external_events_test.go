@@ -149,6 +149,13 @@ func TestExternalTaskClassificationDoesNotInferFromEventID(t *testing.T) {
 	}
 }
 
+func TestTask209DiscoveryClassificationIsExplicitGroup(t *testing.T) {
+	classification := classifyExternalTask("209")
+	if classification.connectorLane != externalLaneMessengerGroup || classification.conversationKind != externalConversationGroup {
+		t.Fatalf("task 209 discovery must be group/table: %#v", classification)
+	}
+}
+
 func TestExternalHealthPreservesProtocolLaneAndScope(t *testing.T) {
 	group := externalHealthData(externalLaneMessengerGroup, "discovery_209", "degraded", "task failed")
 	if group["connectorLane"] != externalLaneMessengerGroup || group["scope"] != "discovery_209" {

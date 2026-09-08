@@ -388,6 +388,29 @@ func (m *MetaClient) emitExternalHistoryPage(ctx context.Context, portal *bridge
 	})
 }
 
+func (m *MetaClient) emitExternalDiscoveryPage(ctx context.Context, batch int, minThreadKey int64, hasMoreBefore bool) error {
+	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
+		return nil
+	}
+	classification := classifyExternalTask("209")
+	cursor := fmt.Sprintf("task209:%d:%d", batch, minThreadKey)
+	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":          fmt.Sprintf("mautrix_task_209:%d:%d", batch, minThreadKey),
+		"eventType":        "history.page",
+		"source":           "mautrix_task_209",
+		"connectorLane":    classification.connectorLane,
+		"conversationKind": classification.conversationKind,
+		"occurredAt":       time.Now().UTC().Format(time.RFC3339Nano),
+		"payload": map[string]any{
+			"connectorLane":    classification.connectorLane,
+			"conversationKind": classification.conversationKind,
+			"hasMoreBefore":    hasMoreBefore,
+			"cursorHash":       cursor,
+			"messages":         []any{},
+		},
+	})
+}
+
 func externalHealthData(connectorLane, scope, state, failureReason string) map[string]any {
 	health := map[string]any{
 		"scope":         scope,
