@@ -63,27 +63,30 @@ func TestExternalE2EEMessageDataText(t *testing.T) {
 	}
 }
 
-func TestExternalE2EEThreadDataPreservesGroupMarker(t *testing.T) {
-	if !externalE2EEIsGroup(true, "login", table.UNKNOWN_THREAD_TYPE) {
-		t.Fatal("explicit group marker must be preserved")
+func TestExternalE2EEClassificationIsAlwaysVestaDirect(t *testing.T) {
+	thread := externalThreadDataWithClassification("group-looking-id", externalConversationClassification{
+		connectorLane:    externalLaneMessenger1To1Vesta,
+		conversationKind: externalConversationDirect,
+	})
+	if thread["connectorLane"] != externalLaneMessenger1To1Vesta || thread["conversationKind"] != externalConversationDirect {
+		t.Fatalf("unexpected E2EE classification: %#v", thread)
+	}
+	if thread["isGroup"] != false {
+		t.Fatalf("E2EE Vesta events must remain direct: %#v", thread)
 	}
 }
 
-func TestExternalE2EEThreadDataClassifiesVestaGroupKey(t *testing.T) {
-	if !externalE2EEIsGroup(false, "", table.UNKNOWN_THREAD_TYPE) {
-		t.Fatal("shared Vesta portal must be classified as a group")
-	}
-	if externalE2EEIsGroup(false, "login", table.UNKNOWN_THREAD_TYPE) {
-		t.Fatal("per-user portal must remain a direct conversation")
-	}
-}
-
-func TestExternalE2EEThreadDataUsesPersistedGroupType(t *testing.T) {
-	if !externalE2EEIsGroup(false, "login", table.GROUP_THREAD) {
-		t.Fatal("persisted Messenger group type must override the per-user portal receiver")
-	}
-	if externalE2EEIsGroup(false, "login", table.ONE_TO_ONE) {
-		t.Fatal("persisted Messenger one-to-one type must remain a direct conversation")
+func TestExternalE2EEThreadDataDoesNotInferFromChatID(t *testing.T) {
+	evt := &WAMessageEvent{FBMessage: &events.FBMessage{Info: types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:    types.NewJID("group-looking-id", types.MessengerServer),
+			IsGroup: true,
+		},
+		ID: "mautrix_task_228:group-looking-id",
+	}}}
+	thread := (&MetaClient{}).externalE2EEThreadData(nil, evt)
+	if thread["connectorLane"] != externalLaneMessenger1To1Vesta || thread["conversationKind"] != externalConversationDirect || thread["isGroup"] != false {
+		t.Fatalf("E2EE producer must use explicit Vesta/direct classification: %#v", thread)
 	}
 }
 
@@ -105,13 +108,54 @@ func TestExternalE2EEPortalLookupKeysFallsBackToSharedPortal(t *testing.T) {
 }
 
 func TestExternalThreadDataMarksLegacyGroupPortal(t *testing.T) {
-	thread := externalThreadData("group", false, networkid.PortalKey{ID: "group"}, table.UNKNOWN_THREAD_TYPE)
+	thread := externalThreadData("group", table.GROUP_THREAD)
 	if thread["isGroup"] != true {
 		t.Fatalf("shared legacy Messenger portal must be a group, got %#v", thread)
 	}
+	if thread["connectorLane"] != externalLaneMessengerGroup || thread["conversationKind"] != externalConversationGroup {
+		t.Fatalf("unexpected legacy group classification: %#v", thread)
+	}
 
-	thread = externalThreadData("direct", false, networkid.PortalKey{ID: "direct", Receiver: "login"}, table.ONE_TO_ONE)
+	thread = externalThreadData("direct", table.ONE_TO_ONE)
 	if thread["isGroup"] != false {
 		t.Fatalf("account-scoped legacy Messenger portal must remain direct, got %#v", thread)
+	}
+	if thread["connectorLane"] != externalLaneMessengerUnknown || thread["conversationKind"] != externalConversationDirect {
+		t.Fatalf("legacy direct must be quarantined without Vesta classification: %#v", thread)
+	}
+}
+
+func TestExternalLegacyUnknownIsQuarantined(t *testing.T) {
+	classification := classifyLegacyExternalConversation(table.UNKNOWN_THREAD_TYPE)
+	if classification.connectorLane != externalLaneMessengerUnknown || classification.conversationKind != externalConversationUnknown {
+		t.Fatalf("unknown legacy thread must be quarantined: %#v", classification)
+	}
+}
+
+func TestExternalTaskClassificationDoesNotInferFromEventID(t *testing.T) {
+	group := classifyExternalTask("228")
+	if group.connectorLane != externalLaneMessengerGroup || group.conversationKind != externalConversationGroup {
+		t.Fatalf("task 228 must be classified as group/table: %#v", group)
+	}
+	if classifyExternalTask("209").connectorLane != externalLaneMessengerGroup {
+		t.Fatal("task 209 must be classified as group/table")
+	}
+	unknown := classifyLegacyExternalConversation(table.UNKNOWN_THREAD_TYPE)
+	if unknown.connectorLane == group.connectorLane || unknown.conversationKind == group.conversationKind {
+		t.Fatal("legacy classification must not inherit task classification")
+	}
+	if externalThreadData("same-event-id", table.UNKNOWN_THREAD_TYPE)["connectorLane"] != externalLaneMessengerUnknown {
+		t.Fatal("event ID must not upgrade an unknown legacy event to the group lane")
+	}
+}
+
+func TestExternalHealthPreservesProtocolLaneAndScope(t *testing.T) {
+	group := externalHealthData(externalLaneMessengerGroup, "discovery_209", "degraded", "task failed")
+	if group["connectorLane"] != externalLaneMessengerGroup || group["scope"] != "discovery_209" {
+		t.Fatalf("group discovery health lost protocol provenance: %#v", group)
+	}
+	vesta := externalHealthData(externalLaneMessenger1To1Vesta, "live", "healthy", "")
+	if vesta["connectorLane"] != externalLaneMessenger1To1Vesta || vesta["runtimeLive"] != true {
+		t.Fatalf("Vesta live health lost protocol provenance: %#v", vesta)
 	}
 }

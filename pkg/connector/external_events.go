@@ -14,6 +14,64 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 )
 
+const (
+	externalLaneMessenger1To1Vesta = "messenger_1to1_vesta"
+	externalLaneMessengerGroup     = "messenger_group_table"
+	externalLaneMessengerUnknown   = "messenger_unclassified"
+
+	externalConversationDirect  = "direct"
+	externalConversationGroup   = "group"
+	externalConversationUnknown = "unknown"
+)
+
+type externalConversationClassification struct {
+	connectorLane    string
+	conversationKind string
+}
+
+func classifyLegacyExternalConversation(threadType table.ThreadType) externalConversationClassification {
+	if externalThreadTypeIsGroup(threadType) {
+		return externalConversationClassification{
+			connectorLane:    externalLaneMessengerGroup,
+			conversationKind: externalConversationGroup,
+		}
+	}
+	if threadType.IsOneToOne() {
+		return externalConversationClassification{
+			connectorLane:    externalLaneMessengerUnknown,
+			conversationKind: externalConversationDirect,
+		}
+	}
+	return externalConversationClassification{
+		connectorLane:    externalLaneMessengerUnknown,
+		conversationKind: externalConversationUnknown,
+	}
+}
+
+func classifyExternalTask(taskLabel string) externalConversationClassification {
+	switch taskLabel {
+	case "209", "228":
+		return externalConversationClassification{
+			connectorLane:    externalLaneMessengerGroup,
+			conversationKind: externalConversationGroup,
+		}
+	default:
+		return externalConversationClassification{
+			connectorLane:    externalLaneMessengerUnknown,
+			conversationKind: externalConversationUnknown,
+		}
+	}
+}
+
+func externalThreadDataWithClassification(threadID string, classification externalConversationClassification) map[string]any {
+	return map[string]any{
+		"threadId":         threadID,
+		"isGroup":          classification.conversationKind == externalConversationGroup,
+		"connectorLane":    classification.connectorLane,
+		"conversationKind": classification.conversationKind,
+	}
+}
+
 func externalMedia(msg *table.WrappedMessage) []map[string]any {
 	media := make([]map[string]any, 0, len(msg.Attachments)+len(msg.BlobAttachments)+len(msg.XMAAttachments)+len(msg.Stickers))
 	for _, attachment := range msg.Attachments {
@@ -87,13 +145,16 @@ func (m *MetaClient) emitExternalMessage(ctx context.Context, source string, evt
 	msg := evt.WrappedMessage
 	threadID := strconv.FormatInt(msg.ThreadKey, 10)
 	portalKey := evt.GetPortalKey()
+	classification := classifyLegacyExternalConversation(m.externalPortalThreadType(ctx, portalKey))
 	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
-		"eventId":    fmt.Sprintf("%s:%s", source, msg.MessageId),
-		"eventType":  "message.upsert",
-		"source":     source,
-		"occurredAt": time.UnixMilli(msg.TimestampMs).UTC().Format(time.RFC3339Nano),
+		"eventId":          fmt.Sprintf("%s:%s", source, msg.MessageId),
+		"eventType":        "message.upsert",
+		"source":           source,
+		"connectorLane":    classification.connectorLane,
+		"conversationKind": classification.conversationKind,
+		"occurredAt":       time.UnixMilli(msg.TimestampMs).UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
-			"thread":  externalThreadData(threadID, false, portalKey, m.externalPortalThreadType(ctx, portalKey)),
+			"thread":  externalThreadDataWithClassification(threadID, classification),
 			"message": m.externalMessage(msg),
 		},
 	})
@@ -237,10 +298,6 @@ func externalThreadTypeIsGroup(threadType table.ThreadType) bool {
 	}
 }
 
-func externalE2EEIsGroup(explicit bool, portalReceiver networkid.UserLoginID, threadType table.ThreadType) bool {
-	return explicit || externalThreadTypeIsGroup(threadType) || portalReceiver == ""
-}
-
 func externalE2EEPortalLookupKeys(portalKey networkid.PortalKey) []networkid.PortalKey {
 	keys := []networkid.PortalKey{portalKey}
 	if portalKey.Receiver != "" {
@@ -263,16 +320,15 @@ func (m *MetaClient) externalPortalThreadType(ctx context.Context, portalKey net
 	return table.UNKNOWN_THREAD_TYPE
 }
 
-func externalThreadData(threadID string, explicitGroup bool, portalKey networkid.PortalKey, threadType table.ThreadType) map[string]any {
-	return map[string]any{
-		"threadId": threadID,
-		"isGroup":  externalE2EEIsGroup(explicitGroup, portalKey.Receiver, threadType),
-	}
+func externalThreadData(threadID string, threadType table.ThreadType) map[string]any {
+	return externalThreadDataWithClassification(threadID, classifyLegacyExternalConversation(threadType))
 }
 
 func (m *MetaClient) externalE2EEThreadData(ctx context.Context, evt *WAMessageEvent) map[string]any {
-	portalKey := evt.GetPortalKey()
-	return externalThreadData(evt.Info.Chat.String(), evt.Info.IsGroup, portalKey, m.externalPortalThreadType(ctx, portalKey))
+	return externalThreadDataWithClassification(evt.Info.Chat.String(), externalConversationClassification{
+		connectorLane:    externalLaneMessenger1To1Vesta,
+		conversationKind: externalConversationDirect,
+	})
 }
 
 func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessageEvent) error {
@@ -280,11 +336,17 @@ func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessage
 		return nil
 	}
 	eventType, message := externalE2EEMessageData(evt)
+	classification := externalConversationClassification{
+		connectorLane:    externalLaneMessenger1To1Vesta,
+		conversationKind: externalConversationDirect,
+	}
 	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
-		"eventId":    fmt.Sprintf("mautrix_live_e2ee:%s:%s", evt.Info.Chat.String(), evt.Info.ID),
-		"eventType":  eventType,
-		"source":     "mautrix_live",
-		"occurredAt": evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
+		"eventId":          fmt.Sprintf("mautrix_live_e2ee:%s:%s", evt.Info.Chat.String(), evt.Info.ID),
+		"eventType":        eventType,
+		"source":           "mautrix_live",
+		"connectorLane":    classification.connectorLane,
+		"conversationKind": classification.conversationKind,
+		"occurredAt":       evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
 			"thread":  m.externalE2EEThreadData(ctx, evt),
 			"message": message,
@@ -301,28 +363,54 @@ func (m *MetaClient) emitExternalHistoryPage(ctx context.Context, portal *bridge
 		messages = append(messages, m.externalMessage(msg))
 	}
 	threadID := string(portal.ID)
+	classification := externalConversationClassification{
+		connectorLane:    externalLaneMessengerUnknown,
+		conversationKind: externalConversationUnknown,
+	}
+	if metadata, ok := getPortalMetadata(portal); ok {
+		classification = classifyLegacyExternalConversation(metadata.ThreadType)
+	}
 	return m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
-		"eventId":    fmt.Sprintf("mautrix_task_228:%s:%d:%s", threadID, upsert.Range.MinTimestampMs, upsert.Range.MinMessageId),
-		"eventType":  "history.page",
-		"source":     "mautrix_task_228",
-		"occurredAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"eventId":          fmt.Sprintf("mautrix_task_228:%s:%d:%s", threadID, upsert.Range.MinTimestampMs, upsert.Range.MinMessageId),
+		"eventType":        "history.page",
+		"source":           "mautrix_task_228",
+		"connectorLane":    classification.connectorLane,
+		"conversationKind": classification.conversationKind,
+		"occurredAt":       time.Now().UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
-			"threadId":      threadID,
-			"hasMoreBefore": upsert.Range.HasMoreBefore,
-			"messages":      messages,
+			"threadId":         threadID,
+			"isGroup":          classification.conversationKind == externalConversationGroup,
+			"connectorLane":    classification.connectorLane,
+			"conversationKind": classification.conversationKind,
+			"hasMoreBefore":    upsert.Range.HasMoreBefore,
+			"messages":         messages,
 		},
 	})
 }
 
-func (m *MetaClient) emitExternalHealth(ctx context.Context, scope, state, failureReason string) {
-	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
-		return
+func externalHealthData(connectorLane, scope, state, failureReason string) map[string]any {
+	health := map[string]any{
+		"scope":         scope,
+		"state":         state,
+		"runtimeLive":   scope == "live" && state == "healthy",
+		"connectorLane": connectorLane,
 	}
-	health := map[string]any{"scope": scope, "state": state, "runtimeLive": scope == "live" && state == "healthy"}
 	if failureReason != "" {
 		health["failureReason"] = failureReason
 	}
-	if err := m.Main.ExternalControl.EmitEvent(ctx, map[string]any{"type": "health", "health": health}); err != nil {
+	return health
+}
+
+func (m *MetaClient) emitExternalHealth(ctx context.Context, connectorLane, scope, state, failureReason string) {
+	if m.Main.ExternalControl == nil || !m.Main.ExternalControl.OwnsLogin(string(m.UserLogin.ID)) {
+		return
+	}
+	health := externalHealthData(connectorLane, scope, state, failureReason)
+	if err := m.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"type":          "health",
+		"connectorLane": connectorLane,
+		"health":        health,
+	}); err != nil {
 		m.UserLogin.Log.Err(err).Str("scope", scope).Msg("Failed to emit external health")
 	}
 }

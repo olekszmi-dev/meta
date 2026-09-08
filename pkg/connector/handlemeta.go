@@ -82,7 +82,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		go m.tryConnectE2EE(false)
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
-		m.emitExternalHealth(ctx, "live", "healthy", "")
+		m.emitExternalHealth(ctx, externalLaneMessengerGroup, "live", "healthy", "")
 		if tbl := m.initialTable.Swap(nil); tbl != nil {
 			log.Debug().Msg("Handling cached initial table")
 			m.parseAndQueueTable(ctx, tbl, true)
@@ -91,9 +91,9 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		go func() {
 			if err := m.StartThreadBackfill(ctx); err != nil {
 				log.Err(err).Msg("Thread backfill failed")
-				m.emitExternalHealth(ctx, "history", "degraded", err.Error())
+				m.emitExternalHealth(ctx, externalLaneMessengerGroup, "discovery_209", "degraded", err.Error())
 			} else {
-				m.emitExternalHealth(ctx, "history", "healthy", "")
+				m.emitExternalHealth(ctx, externalLaneMessengerGroup, "discovery_209", "healthy", "")
 			}
 		}()
 		go m.recoverRoomlessGroupPortals(ctx)
@@ -105,7 +105,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			Error:      MetaTransientDisconnect,
 		}
 		m.UserLogin.BridgeState.Send(m.metaState)
-		m.emitExternalHealth(ctx, "live", "degraded", evt.Err.Error())
+		m.emitExternalHealth(ctx, externalLaneMessengerGroup, "live", "degraded", evt.Err.Error())
 	case *messagix.ReconnectedEvent:
 		if !m.firstE2EEConnectDone {
 			m.firstE2EEConnectDone = true
@@ -115,7 +115,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 		m.connectWaiter.Set()
 		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.metaState)
-		m.emitExternalHealth(ctx, "live", "healthy", "")
+		m.emitExternalHealth(ctx, externalLaneMessengerGroup, "live", "healthy", "")
 		go m.recoverRoomlessGroupPortals(ctx)
 	case *messagix.PermanentErrorEvent:
 		// TODO do full reconnect in some cases?
@@ -134,7 +134,7 @@ func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
 			}
 		}
 		m.UserLogin.BridgeState.Send(m.metaState)
-		m.emitExternalHealth(ctx, "live", "disconnected", evt.Err.Error())
+		m.emitExternalHealth(ctx, externalLaneMessengerGroup, "live", "disconnected", evt.Err.Error())
 		if stopPeriodicReconnect := m.stopPeriodicReconnect.Swap(nil); stopPeriodicReconnect != nil {
 			(*stopPeriodicReconnect)()
 		}
