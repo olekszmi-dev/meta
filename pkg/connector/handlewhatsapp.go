@@ -85,6 +85,7 @@ func (m *MetaClient) e2eeEventHandler(rawEvt any) bool {
 		m.e2eeConnectWaiter.Set()
 		m.waState = status.BridgeState{StateEvent: status.StateConnected}
 		m.UserLogin.BridgeState.Send(m.waState)
+		m.emitExternalHealth(m.Main.Bridge.BackgroundCtx, externalLaneMessenger1To1Vesta, "live", "healthy", "")
 	case *events.Disconnected:
 		log.Debug().Msg("Disconnected from WhatsApp socket")
 		m.e2eeConnectWaiter.Clear()
@@ -93,6 +94,7 @@ func (m *MetaClient) e2eeEventHandler(rawEvt any) bool {
 			Error:      WADisconnected,
 		}
 		m.UserLogin.BridgeState.Send(m.waState)
+		m.emitExternalHealth(m.Main.Bridge.BackgroundCtx, externalLaneMessenger1To1Vesta, "live", "degraded", "e2ee_socket_disconnected")
 	case *events.CATRefreshError:
 		if errors.Is(evt.Error, types.ErrPleaseReloadPage) && m.canReconnect() {
 			log.Err(evt.Error).Msg("Got CATRefreshError, reloading page")
@@ -105,6 +107,7 @@ func (m *MetaClient) e2eeEventHandler(rawEvt any) bool {
 			Message:    evt.PermanentDisconnectDescription(),
 		}
 		m.UserLogin.BridgeState.Send(m.waState)
+		m.emitExternalHealth(m.Main.Bridge.BackgroundCtx, externalLaneMessenger1To1Vesta, "live", "degraded", evt.Error.Error())
 		if m.canReconnect() {
 			go m.FullReconnect()
 		}
@@ -146,6 +149,7 @@ func (m *MetaClient) e2eeEventHandler(rawEvt any) bool {
 			Message:    evt.PermanentDisconnectDescription(),
 		}
 		m.UserLogin.BridgeState.Send(m.waState)
+		m.emitExternalHealth(m.Main.Bridge.BackgroundCtx, externalLaneMessenger1To1Vesta, "live", "disconnected", evt.PermanentDisconnectDescription())
 	case *events.GroupInfo:
 		portalKey := m.makeWAPortalKey(evt.JID)
 		memberChanges := &bridgev2.ChatMemberList{
