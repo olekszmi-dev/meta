@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waConsumerApplication"
 	"go.mau.fi/whatsmeow/types"
@@ -62,16 +63,25 @@ func TestExternalE2EEMessageDataText(t *testing.T) {
 }
 
 func TestExternalE2EEThreadDataPreservesGroupMarker(t *testing.T) {
-	if !externalE2EEIsGroup(true, "login") {
+	if !externalE2EEIsGroup(true, "login", table.UNKNOWN_THREAD_TYPE) {
 		t.Fatal("explicit group marker must be preserved")
 	}
 }
 
 func TestExternalE2EEThreadDataClassifiesVestaGroupKey(t *testing.T) {
-	if !externalE2EEIsGroup(false, "") {
+	if !externalE2EEIsGroup(false, "", table.UNKNOWN_THREAD_TYPE) {
 		t.Fatal("shared Vesta portal must be classified as a group")
 	}
-	if externalE2EEIsGroup(false, "login") {
+	if externalE2EEIsGroup(false, "login", table.UNKNOWN_THREAD_TYPE) {
 		t.Fatal("per-user portal must remain a direct conversation")
+	}
+}
+
+func TestExternalE2EEThreadDataUsesPersistedGroupType(t *testing.T) {
+	if !externalE2EEIsGroup(false, "login", table.GROUP_THREAD) {
+		t.Fatal("persisted Messenger group type must override the per-user portal receiver")
+	}
+	if externalE2EEIsGroup(false, "login", table.ONE_TO_ONE) {
+		t.Fatal("persisted Messenger one-to-one type must remain a direct conversation")
 	}
 }

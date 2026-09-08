@@ -216,15 +216,41 @@ func externalE2EEMessageData(evt *WAMessageEvent) (eventType string, message map
 	return eventType, message
 }
 
-func externalE2EEIsGroup(explicit bool, portalReceiver networkid.UserLoginID) bool {
-	return explicit || portalReceiver == ""
+func externalThreadTypeIsGroup(threadType table.ThreadType) bool {
+	switch threadType {
+	case table.GROUP_THREAD,
+		table.TINCAN_GROUP_DISAPPEARING,
+		table.CARRIER_MESSAGING_GROUP,
+		table.ENCRYPTED_OVER_WA_GROUP,
+		table.COMMUNITY_GROUP,
+		table.COMMUNITY_GROUP_UNJOINED,
+		table.COMMUNITY_PRIVATE_HIDDEN_JOINED_THREAD,
+		table.COMMUNITY_PRIVATE_HIDDEN_UNJOINED_THREAD,
+		table.COMMUNITY_GROUP_INVITED_UNJOINED,
+		table.COMMUNITY_SUB_THREAD,
+		table.XAC_GROUP:
+		return true
+	default:
+		return false
+	}
 }
 
-func externalE2EEThreadData(evt *WAMessageEvent) map[string]any {
+func externalE2EEIsGroup(explicit bool, portalReceiver networkid.UserLoginID, threadType table.ThreadType) bool {
+	return explicit || externalThreadTypeIsGroup(threadType) || portalReceiver == ""
+}
+
+func (m *MetaClient) externalE2EEThreadData(ctx context.Context, evt *WAMessageEvent) map[string]any {
 	portalKey := evt.GetPortalKey()
+	threadType := table.UNKNOWN_THREAD_TYPE
+	portal, err := m.Main.Bridge.GetExistingPortalByKey(ctx, portalKey)
+	if err == nil && portal != nil {
+		if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
+			threadType = metadata.ThreadType
+		}
+	}
 	return map[string]any{
 		"threadId": evt.Info.Chat.String(),
-		"isGroup":  externalE2EEIsGroup(evt.Info.IsGroup, portalKey.Receiver),
+		"isGroup":  externalE2EEIsGroup(evt.Info.IsGroup, portalKey.Receiver, threadType),
 	}
 }
 
@@ -239,7 +265,7 @@ func (m *MetaClient) emitExternalE2EEMessage(ctx context.Context, evt *WAMessage
 		"source":     "mautrix_live",
 		"occurredAt": evt.GetTimestamp().UTC().Format(time.RFC3339Nano),
 		"payload": map[string]any{
-			"thread":  externalE2EEThreadData(evt),
+			"thread":  m.externalE2EEThreadData(ctx, evt),
 			"message": message,
 		},
 	})
