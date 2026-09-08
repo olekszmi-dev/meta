@@ -103,3 +103,15 @@ func TestExternalE2EEPortalLookupKeysFallsBackToSharedPortal(t *testing.T) {
 		t.Fatalf("shared portal must not be duplicated, got %#v", keys)
 	}
 }
+
+func TestExternalThreadDataMarksLegacyGroupPortal(t *testing.T) {
+	thread := externalThreadData("group", false, networkid.PortalKey{ID: "group"}, table.UNKNOWN_THREAD_TYPE)
+	if thread["isGroup"] != true {
+		t.Fatalf("shared legacy Messenger portal must be a group, got %#v", thread)
+	}
+
+	thread = externalThreadData("direct", false, networkid.PortalKey{ID: "direct", Receiver: "login"}, table.ONE_TO_ONE)
+	if thread["isGroup"] != false {
+		t.Fatalf("account-scoped legacy Messenger portal must remain direct, got %#v", thread)
+	}
+}
