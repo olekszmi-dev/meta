@@ -3,7 +3,9 @@ package connector
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 )
@@ -29,8 +31,8 @@ func TestNormalizeExternalContacts(t *testing.T) {
 	}
 
 	result := normalizeExternalContacts(response)
-	if len(result.Contacts) != 1 {
-		t.Fatalf("contacts = %d, want 1", len(result.Contacts))
+	if len(result.Contacts) != 2 {
+		t.Fatalf("contacts = %d, want 2", len(result.Contacts))
 	}
 	contact := result.Contacts[0]
 	if contact.ProviderID != "101" || contact.Name != "Alex Example" || contact.Username != "alex.example" {
@@ -39,11 +41,15 @@ func TestNormalizeExternalContacts(t *testing.T) {
 	if contact.AvatarURL != "https://example.test/large.jpg" {
 		t.Fatalf("avatar URL = %q, want large avatar", contact.AvatarURL)
 	}
+	if !contact.Messageable || result.Contacts[1].ProviderID != "202" || result.Contacts[1].Messageable {
+		t.Fatalf("messageable evidence was not preserved separately: %#v", result.Contacts)
+	}
 	if result.Evidence.ProtocolRows != 5 || result.Evidence.MessageablePersonRows != 2 ||
-		result.Evidence.UniqueMessageableCount != 1 || result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 3 {
+		result.Evidence.UniquePersonCount != 2 || result.Evidence.UniqueMessageableCount != 1 ||
+		result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 2 {
 		t.Fatalf("evidence = %#v", result.Evidence)
 	}
-	if result.Evidence.ContactSetDigest != "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44" {
+	if result.Evidence.ContactSetDigest != "a3a09bf82df4739560d41ba6c360f9ca9a0c7dc586d5eb92b551838a237a0c18" {
 		t.Fatalf("contact set digest = %q", result.Evidence.ContactSetDigest)
 	}
 }
@@ -89,12 +95,62 @@ func TestNormalizeExternalContactsIncludesVerifiedRows(t *testing.T) {
 			{ContactId: 606, CanViewerMessage: true, IsSelf: true},
 		},
 	})
-	if len(result.Contacts) != 1 || result.Contacts[0].ProviderID != "404" {
-		t.Fatalf("contacts = %#v, want one verified contact", result.Contacts)
+	if len(result.Contacts) != 2 || result.Contacts[0].ProviderID != "404" || result.Contacts[1].ProviderID != "505" {
+		t.Fatalf("contacts = %#v, want both verified contacts", result.Contacts)
 	}
 	if result.Evidence.ProtocolRows != 5 || result.Evidence.MessageablePersonRows != 2 ||
-		result.Evidence.UniqueMessageableCount != 1 || result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 3 {
+		result.Evidence.UniquePersonCount != 2 || result.Evidence.UniqueMessageableCount != 1 ||
+		result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 2 {
 		t.Fatalf("evidence = %#v", result.Evidence)
+	}
+}
+
+func TestExternalPersonUpsertEventKeepsProfilePrivateAndMessageabilitySeparate(t *testing.T) {
+	contact := externalContactSyncContact{
+		ProviderID:  "202",
+		Name:        "Verified Contact",
+		AvatarURL:   "https://example.test/private-avatar.jpg",
+		Messageable: false,
+		SourceRows:  []string{"verified"},
+	}
+	event, ok := externalPersonUpsertEvent(contact, time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("valid provider person was rejected")
+	}
+	if event["eventType"] != "person.upsert" || event["source"] != "mautrix_task_452" || event["visibility"] != "private" ||
+		event["connectorLane"] != externalLaneMessengerGroup || event["conversationKind"] != externalConversationGroup {
+		t.Fatalf("unexpected private person envelope: %#v", event)
+	}
+	payload := event["payload"].(map[string]any)
+	if payload["personId"] != int64(202) || payload["displayName"] != "Verified Contact" {
+		t.Fatalf("unexpected person identity: %#v", payload)
+	}
+	avatarRef, _ := payload["avatarRef"].(string)
+	if !strings.HasPrefix(avatarRef, "mautrix_contact_avatar:") || strings.Contains(avatarRef, "http") {
+		t.Fatalf("avatar reference is not opaque: %q", avatarRef)
+	}
+	aliases := payload["aliases"].([]map[string]string)
+	if len(aliases) != 1 || aliases[0]["namespace"] != "meta_user_id" || aliases[0]["id"] != "202" {
+		t.Fatalf("unexpected aliases: %#v", aliases)
+	}
+	messageable := payload["messageableEvidence"].(map[string]any)
+	if messageable["canViewerMessage"] != false {
+		t.Fatalf("non-messageable provider evidence was lost: %#v", messageable)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(contact.AvatarURL)) {
+		t.Fatalf("plaintext avatar URL leaked into private event: %s", encoded)
+	}
+}
+
+func TestExternalPersonUpsertRejectsInvalidProviderID(t *testing.T) {
+	for _, providerID := range []string{"", "username", "0", "-1"} {
+		if _, ok := externalPersonUpsertEvent(externalContactSyncContact{ProviderID: providerID}, time.Now()); ok {
+			t.Fatalf("invalid provider ID %q was accepted", providerID)
+		}
 	}
 }
 

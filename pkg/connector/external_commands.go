@@ -65,16 +65,19 @@ func externalSendResult(response *table.LSTable, otid int64) map[string]any {
 }
 
 type externalContactSyncContact struct {
-	ProviderID string `json:"providerId"`
-	Name       string `json:"name,omitempty"`
-	Username   string `json:"username,omitempty"`
-	AvatarURL  string `json:"avatarUrl,omitempty"`
+	ProviderID  string   `json:"providerId"`
+	Name        string   `json:"name,omitempty"`
+	Username    string   `json:"username,omitempty"`
+	AvatarURL   string   `json:"avatarUrl,omitempty"`
+	Messageable bool     `json:"messageable"`
+	SourceRows  []string `json:"sourceRows"`
 }
 
 type externalContactSyncEvidence struct {
 	TaskLabel              string `json:"taskLabel"`
 	ProtocolRows           int    `json:"protocolRows"`
 	MessageablePersonRows  int    `json:"messageablePersonRows"`
+	UniquePersonCount      int    `json:"uniquePersonCount"`
 	UniqueMessageableCount int    `json:"uniqueMessageableCount"`
 	DuplicateRows          int    `json:"duplicateRows"`
 	SkippedRows            int    `json:"skippedRows"`
@@ -115,24 +118,42 @@ func normalizeExternalContacts(response *table.LSTable) externalContactSyncResul
 		return result
 	}
 
-	seen := make(map[int64]struct{}, len(response.LSDeleteThenInsertContact)+len(response.LSVerifyContactRowExists))
+	seen := make(map[int64]int, len(response.LSDeleteThenInsertContact)+len(response.LSVerifyContactRowExists))
 	result.Evidence.ProtocolRows = len(response.LSDeleteThenInsertContact) + len(response.LSVerifyContactRowExists)
-	appendContact := func(id int64, name, username, avatarURL string) {
-		result.Evidence.MessageablePersonRows++
-		if _, ok := seen[id]; ok {
+	appendContact := func(id int64, name, username, avatarURL, sourceRow string, messageable bool) {
+		if messageable {
+			result.Evidence.MessageablePersonRows++
+		}
+		if index, ok := seen[id]; ok {
 			result.Evidence.DuplicateRows++
+			existing := &result.Contacts[index]
+			existing.Messageable = existing.Messageable || messageable
+			if existing.Name == "" {
+				existing.Name = strings.TrimSpace(name)
+			}
+			if existing.Username == "" {
+				existing.Username = strings.TrimSpace(username)
+			}
+			if existing.AvatarURL == "" {
+				existing.AvatarURL = strings.TrimSpace(avatarURL)
+			}
+			if !externalContainsString(existing.SourceRows, sourceRow) {
+				existing.SourceRows = append(existing.SourceRows, sourceRow)
+			}
 			return
 		}
-		seen[id] = struct{}{}
+		seen[id] = len(result.Contacts)
 		result.Contacts = append(result.Contacts, externalContactSyncContact{
-			ProviderID: strconv.FormatInt(id, 10),
-			Name:       strings.TrimSpace(name),
-			Username:   strings.TrimSpace(username),
-			AvatarURL:  strings.TrimSpace(avatarURL),
+			ProviderID:  strconv.FormatInt(id, 10),
+			Name:        strings.TrimSpace(name),
+			Username:    strings.TrimSpace(username),
+			AvatarURL:   strings.TrimSpace(avatarURL),
+			Messageable: messageable,
+			SourceRows:  []string{sourceRow},
 		})
 	}
 	for _, contact := range response.LSDeleteThenInsertContact {
-		if contact == nil || contact.Id <= 0 || !contact.IsMessengerUser || !contact.CanViewerMessage {
+		if contact == nil || contact.Id <= 0 || !contact.IsMessengerUser {
 			result.Evidence.SkippedRows++
 			continue
 		}
@@ -141,25 +162,47 @@ func normalizeExternalContacts(response *table.LSTable) externalContactSyncResul
 		if username == "" {
 			username = strings.TrimSpace(contact.SecondaryName)
 		}
-		appendContact(contact.Id, contact.Name, username, contact.GetAvatarURL())
+		appendContact(contact.Id, contact.Name, username, contact.GetAvatarURL(), "inserted", contact.CanViewerMessage)
 	}
 	for _, contact := range response.LSVerifyContactRowExists {
-		if contact == nil || contact.ContactId <= 0 || !contact.CanViewerMessage || contact.IsSelf {
+		if contact == nil || contact.ContactId <= 0 || contact.IsSelf {
 			result.Evidence.SkippedRows++
 			continue
 		}
-		appendContact(contact.ContactId, contact.Name, contact.SecondaryName, contact.GetAvatarURL())
+		appendContact(contact.ContactId, contact.Name, contact.SecondaryName, contact.GetAvatarURL(), "verified", contact.CanViewerMessage)
 	}
-	result.Evidence.UniqueMessageableCount = len(result.Contacts)
+	sort.Slice(result.Contacts, func(i, j int) bool {
+		left, _ := strconv.ParseInt(result.Contacts[i].ProviderID, 10, 64)
+		right, _ := strconv.ParseInt(result.Contacts[j].ProviderID, 10, 64)
+		return left < right
+	})
+	result.Evidence.UniquePersonCount = len(result.Contacts)
+	for _, contact := range result.Contacts {
+		if contact.Messageable {
+			result.Evidence.UniqueMessageableCount++
+		}
+	}
 	result.Evidence.ContactSetDigest = externalContactSetDigest(result.Contacts)
 	return result
+}
+
+func externalContainsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func externalContactsSyncResponse(response *table.LSTable) map[string]any {
 	if response == nil {
 		return map[string]any{"ok": false, "error": "provider_contacts_sync_empty_response"}
 	}
-	result := normalizeExternalContacts(response)
+	return externalContactsSyncResultResponse(normalizeExternalContacts(response))
+}
+
+func externalContactsSyncResultResponse(result externalContactSyncResult) map[string]any {
 	return map[string]any{
 		"ok":       true,
 		"status":   "completed",
@@ -212,7 +255,24 @@ func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *ext
 		if err != nil {
 			return map[string]any{"ok": false, "error": "provider_contacts_sync_failed"}
 		}
-		return externalContactsSyncResponse(response)
+		if response == nil {
+			return map[string]any{"ok": false, "error": "provider_contacts_sync_empty_response"}
+		}
+		result := normalizeExternalContacts(response)
+		if err = client.emitExternalPeople(ctx, result.Contacts); err != nil {
+			return map[string]any{"ok": false, "error": "person_projection_failed"}
+		}
+		return externalContactsSyncResultResponse(result)
+	case "threads_sync":
+		evidence, err := client.emitExternalStoredThreads(ctx)
+		if err != nil {
+			return map[string]any{"ok": false, "error": "thread_projection_failed"}
+		}
+		return map[string]any{
+			"ok":       true,
+			"status":   "completed",
+			"evidence": evidence,
+		}
 	case "send":
 		threadID := int64Payload(command.Payload, "threadId")
 		body := stringPayload(command.Payload, "body")
