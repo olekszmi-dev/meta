@@ -2,6 +2,7 @@ package connector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -9,6 +10,49 @@ import (
 
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 )
+
+func TestExternalCommandTimeoutOnlyBoundsReadOnlyProjections(t *testing.T) {
+	if got := externalCommandTimeout("contacts_sync"); got != externalProjectionTimeout {
+		t.Fatalf("contacts timeout = %v, want %v", got, externalProjectionTimeout)
+	}
+	if got := externalCommandTimeout("threads_sync"); got != externalProjectionTimeout {
+		t.Fatalf("threads timeout = %v, want %v", got, externalProjectionTimeout)
+	}
+	for _, commandType := range []string{"send", "reconnect", "history", "pin_restore"} {
+		if got := externalCommandTimeout(commandType); got != 0 {
+			t.Fatalf("%s timeout = %v, want synchronous execution", commandType, got)
+		}
+	}
+}
+
+func TestExecuteBoundedExternalCommandReturnsCompletedResult(t *testing.T) {
+	want := map[string]any{"ok": true, "status": "completed"}
+	got := executeBoundedExternalCommand(context.Background(), time.Second, func(context.Context) map[string]any {
+		return want
+	})
+	if got["ok"] != true || got["status"] != "completed" {
+		t.Fatalf("result = %#v, want %#v", got, want)
+	}
+}
+
+func TestExecuteBoundedExternalCommandReleasesLoopWhenProviderIgnoresCancellation(t *testing.T) {
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	got := executeBoundedExternalCommand(context.Background(), 20*time.Millisecond, func(context.Context) map[string]any {
+		defer close(finished)
+		<-release
+		return map[string]any{"ok": true}
+	})
+	if got["ok"] != false || got["error"] != "provider_command_timeout" {
+		t.Fatalf("result = %#v, want provider timeout", got)
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("test executor did not exit after release")
+	}
+}
 
 func TestNormalizeExternalContacts(t *testing.T) {
 	response := &table.LSTable{

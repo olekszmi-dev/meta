@@ -18,7 +18,39 @@ import (
 const (
 	externalContactsDefaultLimit int64 = 100
 	externalContactsMaxLimit     int64 = 500
+	externalProjectionTimeout          = 90 * time.Second
 )
+
+func externalCommandTimeout(commandType string) time.Duration {
+	switch commandType {
+	case "contacts_sync", "threads_sync":
+		return externalProjectionTimeout
+	default:
+		return 0
+	}
+}
+
+func executeBoundedExternalCommand(
+	ctx context.Context,
+	timeout time.Duration,
+	execute func(context.Context) map[string]any,
+) map[string]any {
+	if timeout <= 0 {
+		return execute(ctx)
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resultCh := make(chan map[string]any, 1)
+	go func() {
+		resultCh <- execute(commandCtx)
+	}()
+	select {
+	case result := <-resultCh:
+		return result
+	case <-commandCtx.Done():
+		return map[string]any{"ok": false, "error": "provider_command_timeout"}
+	}
+}
 
 func (m *MetaConnector) selectedExternalClient() *MetaClient {
 	if m.ExternalControl == nil {
@@ -307,6 +339,13 @@ func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *ext
 	}
 }
 
+func (m *MetaConnector) executeExternalCommandBounded(ctx context.Context, command *externalCommand) map[string]any {
+	// Only read-only projections receive a timeout; side-effecting commands must remain synchronous.
+	return executeBoundedExternalCommand(ctx, externalCommandTimeout(command.CommandType), func(commandCtx context.Context) map[string]any {
+		return m.executeExternalCommand(commandCtx, command)
+	})
+}
+
 func (m *MetaConnector) runExternalCommandLoop(ctx context.Context) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -323,7 +362,7 @@ func (m *MetaConnector) runExternalCommandLoop(ctx context.Context) {
 			if command == nil {
 				continue
 			}
-			result := m.executeExternalCommand(ctx, command)
+			result := m.executeExternalCommandBounded(ctx, command)
 			if err = m.ExternalControl.CompleteCommand(ctx, command.CommandID, result); err != nil {
 				m.Bridge.Log.Error().Err(err).Msg("Failed to persist external command result")
 			}
