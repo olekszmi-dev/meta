@@ -43,6 +43,26 @@ func TestNormalizeExternalContacts(t *testing.T) {
 		result.Evidence.UniqueMessageableCount != 1 || result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 3 {
 		t.Fatalf("evidence = %#v", result.Evidence)
 	}
+	if result.Evidence.ContactSetDigest != "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44" {
+		t.Fatalf("contact set digest = %q", result.Evidence.ContactSetDigest)
+	}
+}
+
+func TestExternalContactSetDigestSortsAndDeduplicatesIDs(t *testing.T) {
+	contacts := []externalContactSyncContact{
+		{ProviderID: "303"},
+		{ProviderID: "101"},
+		{ProviderID: "303"},
+		{ProviderID: "202"},
+		{ProviderID: ""},
+	}
+	want := "83214d83da0ad2db63f84295d515370edef277ad9513508504f8cc2e5d77ac2f"
+	if got := externalContactSetDigest(contacts); got != want {
+		t.Fatalf("digest = %q, want %q", got, want)
+	}
+	if got := externalContactSetDigest([]externalContactSyncContact{{ProviderID: "202"}, {ProviderID: "101"}, {ProviderID: "303"}}); got != want {
+		t.Fatalf("digest changes with order: %q, want %q", got, want)
+	}
 }
 
 func TestNormalizeExternalContactsUsesSecondaryNameFallback(t *testing.T) {
@@ -80,8 +100,47 @@ func TestExternalContactsSyncResponseContainsNoRawProtocolPayload(t *testing.T) 
 	if !json.Valid(encoded) {
 		t.Fatalf("invalid response payload: %s", encoded)
 	}
-	if bytes.Contains(encoded, []byte("protocol-secret")) {
+	if _, ok := response["contacts"]; ok {
+		t.Fatalf("plaintext contacts were included in the control response: %s", encoded)
+	}
+	for _, raw := range []string{"protocol-secret", "Alex", "https://example.test", "providerId"} {
+		if bytes.Contains(encoded, []byte(raw)) {
+			t.Fatalf("plaintext contact data leaked (%q): %s", raw, encoded)
+		}
+	}
+	if bytes.Contains(encoded, []byte("101")) {
 		t.Fatalf("raw protocol field leaked: %s", encoded)
+	}
+}
+
+func TestExternalContactsSyncLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload map[string]any
+		want    int64
+		valid   bool
+	}{
+		{name: "default", want: externalContactsDefaultLimit, valid: true},
+		{name: "minimum", payload: map[string]any{"limit": "1"}, want: 1, valid: true},
+		{name: "maximum", payload: map[string]any{"limit": "500"}, want: 500, valid: true},
+		{name: "zero rejected", payload: map[string]any{"limit": "0"}},
+		{name: "over maximum rejected", payload: map[string]any{"limit": "501"}},
+		{name: "negative rejected", payload: map[string]any{"limit": "-1"}},
+		{name: "non numeric rejected", payload: map[string]any{"limit": "many"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := externalContactsSyncLimit(test.payload)
+			if test.valid {
+				if err != nil || got != test.want {
+					t.Fatalf("limit = %d, err = %v, want %d", got, err, test.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected invalid limit, got %d", got)
+			}
+		})
 	}
 }
 

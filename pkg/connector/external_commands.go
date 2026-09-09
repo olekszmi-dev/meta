@@ -2,7 +2,10 @@ package connector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +13,11 @@ import (
 	"go.mau.fi/mautrix-meta/pkg/messagix/methods"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+)
+
+const (
+	externalContactsDefaultLimit int64 = 100
+	externalContactsMaxLimit     int64 = 500
 )
 
 func (m *MetaConnector) selectedExternalClient() *MetaClient {
@@ -70,11 +78,32 @@ type externalContactSyncEvidence struct {
 	UniqueMessageableCount int    `json:"uniqueMessageableCount"`
 	DuplicateRows          int    `json:"duplicateRows"`
 	SkippedRows            int    `json:"skippedRows"`
+	ContactSetDigest       string `json:"contactSetDigest"`
 }
 
 type externalContactSyncResult struct {
 	Contacts []externalContactSyncContact `json:"contacts"`
 	Evidence externalContactSyncEvidence  `json:"evidence"`
+}
+
+func externalContactSetDigest(contacts []externalContactSyncContact) string {
+	ids := make([]string, 0, len(contacts))
+	seen := make(map[string]struct{}, len(contacts))
+	for _, contact := range contacts {
+		id := strings.TrimSpace(contact.ProviderID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	// Newline-delimited sorted IDs provide one stable representation without exposing them.
+	sort.Strings(ids)
+	digest := sha256.Sum256([]byte(strings.Join(ids, "\n")))
+	return hex.EncodeToString(digest[:])
 }
 
 func normalizeExternalContacts(response *table.LSTable) externalContactSyncResult {
@@ -112,6 +141,7 @@ func normalizeExternalContacts(response *table.LSTable) externalContactSyncResul
 		})
 	}
 	result.Evidence.UniqueMessageableCount = len(result.Contacts)
+	result.Evidence.ContactSetDigest = externalContactSetDigest(result.Contacts)
 	return result
 }
 
@@ -124,9 +154,23 @@ func externalContactsSyncResponse(response *table.LSTable) map[string]any {
 		"ok":       true,
 		"status":   "completed",
 		"task":     452,
-		"contacts": result.Contacts,
 		"evidence": result.Evidence,
 	}
+}
+
+func externalContactsSyncLimit(payload map[string]any) (int64, error) {
+	if payload == nil {
+		return externalContactsDefaultLimit, nil
+	}
+	raw, ok := payload["limit"]
+	if !ok || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		return externalContactsDefaultLimit, nil
+	}
+	limit, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(raw)), 10, 64)
+	if err != nil || limit < 1 || limit > externalContactsMaxLimit {
+		return 0, fmt.Errorf("limit must be between 1 and %d", externalContactsMaxLimit)
+	}
+	return limit, nil
 }
 
 func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *externalCommand) map[string]any {
@@ -150,8 +194,8 @@ func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *ext
 		}
 		return map[string]any{"ok": true, "status": "queued", "task": 228}
 	case "contacts_sync":
-		limit := int64Payload(command.Payload, "limit")
-		if limit < 0 {
+		limit, err := externalContactsSyncLimit(command.Payload)
+		if err != nil {
 			return map[string]any{"ok": false, "error": "contacts_sync_limit_invalid"}
 		}
 		response, err := client.Client.ExecuteTasks(ctx, &socket.GetContactsTask{Limit: limit})
