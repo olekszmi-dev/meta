@@ -170,8 +170,14 @@ func TestExternalThreadProjectionFromStoredPortalSupportsReadOnlySync(t *testing
 
 	portal.NameIsCustom = true
 	projection, _ = externalThreadProjectionFromPortal(portal)
+	if projection.Title != "Existing Group 4b2" {
+		t.Fatalf("stored group title was suppressed: %#v", projection)
+	}
+
+	portal.Metadata = &metaid.PortalMetadata{ThreadType: table.ONE_TO_ONE}
+	projection, _ = externalThreadProjectionFromPortal(portal)
 	if projection.Title != "" {
-		t.Fatalf("locally customized portal name was treated as provider evidence: %#v", projection)
+		t.Fatalf("locally customized direct-chat name was treated as provider evidence: %#v", projection)
 	}
 }
 

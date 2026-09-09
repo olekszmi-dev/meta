@@ -398,7 +398,7 @@ func externalThreadProjectionFromPortal(portal *bridgev2.Portal) (externalThread
 		ThreadID:       threadID,
 		Classification: classifyStoredExternalConversation(threadType),
 	}
-	if !portal.NameIsCustom {
+	if !portal.NameIsCustom || projection.Classification.conversationKind == externalConversationGroup {
 		projection.Title = strings.TrimSpace(portal.Name)
 	}
 	if otherUserID, err := strconv.ParseInt(strings.TrimSpace(string(portal.OtherUserID)), 10, 64); err == nil && otherUserID > 0 {
