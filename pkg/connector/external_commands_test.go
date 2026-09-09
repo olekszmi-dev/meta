@@ -79,6 +79,25 @@ func TestNormalizeExternalContactsUsesSecondaryNameFallback(t *testing.T) {
 	}
 }
 
+func TestNormalizeExternalContactsIncludesVerifiedRows(t *testing.T) {
+	result := normalizeExternalContacts(&table.LSTable{
+		LSVerifyContactRowExists: []*table.LSVerifyContactRowExists{
+			{ContactId: 404, Name: "Verified Contact", SecondaryName: "verified", CanViewerMessage: true},
+			{ContactId: 404, CanViewerMessage: true},
+			{ContactId: 505, CanViewerMessage: false},
+			{ContactId: 0, CanViewerMessage: true},
+			{ContactId: 606, CanViewerMessage: true, IsSelf: true},
+		},
+	})
+	if len(result.Contacts) != 1 || result.Contacts[0].ProviderID != "404" {
+		t.Fatalf("contacts = %#v, want one verified contact", result.Contacts)
+	}
+	if result.Evidence.ProtocolRows != 5 || result.Evidence.MessageablePersonRows != 2 ||
+		result.Evidence.UniqueMessageableCount != 1 || result.Evidence.DuplicateRows != 1 || result.Evidence.SkippedRows != 3 {
+		t.Fatalf("evidence = %#v", result.Evidence)
+	}
+}
+
 func TestExternalContactsSyncResponseContainsNoRawProtocolPayload(t *testing.T) {
 	response := externalContactsSyncResponse(&table.LSTable{
 		LSDeleteThenInsertContact: []*table.LSDeleteThenInsertContact{{
@@ -87,6 +106,13 @@ func TestExternalContactsSyncResponseContainsNoRawProtocolPayload(t *testing.T) 
 			IsMessengerUser:  true,
 			CanViewerMessage: true,
 			Unrecognized:     map[int]any{99: "protocol-secret"},
+		}},
+		LSVerifyContactRowExists: []*table.LSVerifyContactRowExists{{
+			ContactId:        202,
+			Name:             "Verified Secret",
+			SecondaryName:    "verified-secret",
+			CanViewerMessage: true,
+			Unrecognized:     map[int]any{98: "verified-protocol-secret"},
 		}},
 	})
 
@@ -103,13 +129,16 @@ func TestExternalContactsSyncResponseContainsNoRawProtocolPayload(t *testing.T) 
 	if _, ok := response["contacts"]; ok {
 		t.Fatalf("plaintext contacts were included in the control response: %s", encoded)
 	}
-	for _, raw := range []string{"protocol-secret", "Alex", "https://example.test", "providerId"} {
+	for _, raw := range []string{"protocol-secret", "verified-protocol-secret", "Verified Secret", "verified-secret", "Alex", "https://example.test", "providerId"} {
 		if bytes.Contains(encoded, []byte(raw)) {
 			t.Fatalf("plaintext contact data leaked (%q): %s", raw, encoded)
 		}
 	}
 	if bytes.Contains(encoded, []byte("101")) {
 		t.Fatalf("raw protocol field leaked: %s", encoded)
+	}
+	if bytes.Contains(encoded, []byte("202")) {
+		t.Fatalf("verified contact ID leaked: %s", encoded)
 	}
 }
 
