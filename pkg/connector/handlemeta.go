@@ -211,6 +211,12 @@ func (m *MetaClient) handleParsedTable(ctx context.Context, isInitial bool, tbl 
 		if ctx.Err() != nil {
 			return
 		}
+		if thread, ok := evt.(*FBChatResync); ok {
+			if err := m.emitExternalThreadResync(ctx, thread); err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to persist external thread metadata before Matrix dispatch")
+				return
+			}
+		}
 		if message, ok := evt.(*FBMessageEvent); ok {
 			if err := m.emitExternalMessage(ctx, "mautrix_live", message); err != nil {
 				zerolog.Ctx(ctx).Err(err).Msg("Failed to persist external live message before Matrix dispatch")
