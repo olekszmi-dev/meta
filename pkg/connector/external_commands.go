@@ -115,30 +115,40 @@ func normalizeExternalContacts(response *table.LSTable) externalContactSyncResul
 		return result
 	}
 
-	seen := make(map[int64]struct{}, len(response.LSDeleteThenInsertContact))
-	result.Evidence.ProtocolRows = len(response.LSDeleteThenInsertContact)
+	seen := make(map[int64]struct{}, len(response.LSDeleteThenInsertContact)+len(response.LSVerifyContactRowExists))
+	result.Evidence.ProtocolRows = len(response.LSDeleteThenInsertContact) + len(response.LSVerifyContactRowExists)
+	appendContact := func(id int64, name, username, avatarURL string) {
+		result.Evidence.MessageablePersonRows++
+		if _, ok := seen[id]; ok {
+			result.Evidence.DuplicateRows++
+			return
+		}
+		seen[id] = struct{}{}
+		result.Contacts = append(result.Contacts, externalContactSyncContact{
+			ProviderID: strconv.FormatInt(id, 10),
+			Name:       strings.TrimSpace(name),
+			Username:   strings.TrimSpace(username),
+			AvatarURL:  strings.TrimSpace(avatarURL),
+		})
+	}
 	for _, contact := range response.LSDeleteThenInsertContact {
 		if contact == nil || contact.Id <= 0 || !contact.IsMessengerUser || !contact.CanViewerMessage {
 			result.Evidence.SkippedRows++
 			continue
 		}
-		result.Evidence.MessageablePersonRows++
-		if _, ok := seen[contact.Id]; ok {
-			result.Evidence.DuplicateRows++
-			continue
-		}
-		seen[contact.Id] = struct{}{}
 
 		username := strings.TrimSpace(contact.Username)
 		if username == "" {
 			username = strings.TrimSpace(contact.SecondaryName)
 		}
-		result.Contacts = append(result.Contacts, externalContactSyncContact{
-			ProviderID: strconv.FormatInt(contact.Id, 10),
-			Name:       strings.TrimSpace(contact.Name),
-			Username:   username,
-			AvatarURL:  strings.TrimSpace(contact.GetAvatarURL()),
-		})
+		appendContact(contact.Id, contact.Name, username, contact.GetAvatarURL())
+	}
+	for _, contact := range response.LSVerifyContactRowExists {
+		if contact == nil || contact.ContactId <= 0 || !contact.CanViewerMessage || contact.IsSelf {
+			result.Evidence.SkippedRows++
+			continue
+		}
+		appendContact(contact.ContactId, contact.Name, contact.SecondaryName, contact.GetAvatarURL())
 	}
 	result.Evidence.UniqueMessageableCount = len(result.Contacts)
 	result.Evidence.ContactSetDigest = externalContactSetDigest(result.Contacts)
