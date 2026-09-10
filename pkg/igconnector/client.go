@@ -52,17 +52,37 @@ type IGClient struct {
 	caughtUp     *exsync.Event
 	catchingUpTo int64
 
-	pendingGroupCreations *exsync.Set[string]
-	stopConnectAttempt    atomic.Pointer[context.CancelFunc]
-	stopChatBackfill      atomic.Pointer[context.CancelFunc]
-	chatBackfillLock      sync.Mutex
-	mailboxProcessed      atomic.Bool
-	waitMailboxProcessed  chan struct{}
-	permanentErrored      atomic.Bool
+	pendingGroupCreations    *exsync.Set[string]
+	stopConnectAttempt       atomic.Pointer[context.CancelFunc]
+	stopChatBackfill         atomic.Pointer[context.CancelFunc]
+	chatBackfillLock         sync.Mutex
+	mailboxProcessed         atomic.Bool
+	waitMailboxProcessed     chan struct{}
+	permanentErrored         atomic.Bool
+	externalCommandStarted   atomic.Bool
+	externalCredentialLock   sync.Mutex
+	externalCredentialDigest string
 }
 
 func (ic *IGConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
 	loginMetadata := login.Metadata.(*metaid.UserLoginMetadata)
+	if ic.ExternalControl != nil {
+		if !ic.ExternalControl.OwnsLogin(string(login.ID)) {
+			return fmt.Errorf("external Instagram worker does not own login %s", login.ID)
+		}
+		credentials, err := ic.ExternalControl.LoadCredentials(ctx, string(login.ID))
+		if err != nil {
+			return fmt.Errorf("failed to load external Instagram credentials: %w", err)
+		}
+		if credentials.Credentials.Platform != types.Instagram {
+			return fmt.Errorf("external credentials are not for Instagram")
+		}
+		loginMetadata.Platform = types.Instagram
+		loginMetadata.Cookies = hydrateCookies(credentials.Credentials.Cookies)
+		loginMetadata.LoginUA = credentials.Credentials.LoginUA
+		loginMetadata.CredentialRef = credentials.AccountID
+		loginMetadata.CredentialGeneration = credentials.CredentialGeneration
+	}
 	c := &IGClient{
 		Main:      ic,
 		LoginMeta: loginMetadata,
@@ -72,6 +92,9 @@ func (ic *IGConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLo
 		pendingGroupCreations: exsync.NewSet[string](),
 	}
 	c.mailboxProcessed.Store(true)
+	if loginMetadata.Cookies != nil {
+		c.externalCredentialDigest = cookieDigest(loginMetadata.Cookies)
+	}
 	login.Client = c
 	return nil
 }
@@ -149,6 +172,9 @@ func (ic *IGClient) Connect(ctx context.Context) {
 	defer cancel()
 	ic.stopConnectAttempt.Store(&cancel)
 	ic.ensureIGClient()
+	if ic.Main.ExternalControl != nil && ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) && ic.externalCommandStarted.CompareAndSwap(false, true) {
+		go ic.pollExternalCommands(ctx)
+	}
 	seqID, seqTS, err := ic.Main.DB.GetIGSeqID(ctx, ic.UserLogin.ID)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get seq ID")

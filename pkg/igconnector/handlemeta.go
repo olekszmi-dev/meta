@@ -94,6 +94,10 @@ func (ic *IGClient) handleIGEvent(ctx context.Context, rawEvt slidetypes.ClientE
 	case *slidetypes.Connected:
 		ic.permanentErrored.Store(false)
 		ic.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+		if ic.Main.ExternalControl != nil {
+			_ = ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{"type": "health", "health": map[string]any{"scope": "live", "state": "healthy", "runtimeLive": true}})
+			_ = ic.persistExternalCredentials(ctx)
+		}
 		if evt.SubscribedSeqID >= evt.LatestSeqID {
 			ic.catchingUpTo = 0
 			go func() {
@@ -130,6 +134,9 @@ func (ic *IGClient) handleIGEvent(ctx context.Context, rawEvt slidetypes.ClientE
 				"go_error": evt.Error.Error(),
 			},
 		})
+		if ic.Main.ExternalControl != nil {
+			_ = ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{"type": "health", "health": map[string]any{"scope": "live", "state": "disconnected", "failureReason": errCode}})
+		}
 		return retErr
 	case *slidetypes.AuthError:
 		if state := ic.errorToBridgeState(ctx, evt.Error); state != nil {
@@ -143,6 +150,9 @@ func (ic *IGClient) handleIGEvent(ctx context.Context, rawEvt slidetypes.ClientE
 		_ = ic.doWaitMailboxProcessed(ctx)
 		err := ic.Main.DB.PutIGSeqID(ctx, ic.UserLogin.ID, evt.SeqID, evt.Timestamp)
 		if err != nil {
+			return err
+		}
+		if err = ic.persistExternalCredentials(ctx); err != nil {
 			return err
 		}
 		if c := ic.catchingUpTo; c > 0 && evt.SeqID >= c {
@@ -288,9 +298,9 @@ func (ic *IGClient) handleDelta(ctx context.Context, d *slidetypes.Delta) error 
 	var res bridgev2.EventHandlingResult
 	switch evt := d.Data.(type) {
 	case *slidetypes.NewMessageEvent:
-		res = ic.handleMessage(portalKey, evt.Message)
+		res = ic.handleMessage(ctx, portalKey, evt.Message)
 	case *slidetypes.AdminMessageEvent:
-		res = ic.handleMessage(portalKey, evt.Message)
+		res = ic.handleMessage(ctx, portalKey, evt.Message)
 	case *slidetypes.EditMessageEvent:
 		res = ic.handleEdit(portalKey, evt)
 	case *slidetypes.CreateReactionEvent:
@@ -361,7 +371,10 @@ func (ic *IGClient) makeMessageEventMeta(portalKey networkid.PortalKey, msg *sli
 	}
 }
 
-func (ic *IGClient) handleMessage(portalKey networkid.PortalKey, msg *slidetypes.Message) bridgev2.EventHandlingResult {
+func (ic *IGClient) handleMessage(ctx context.Context, portalKey networkid.PortalKey, msg *slidetypes.Message) bridgev2.EventHandlingResult {
+	if err := ic.emitExternalMessage(ctx, portalKey, msg); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram ingress: %w", err))
+	}
 	msgID := metaid.MakeFBMessageID(msg.ID)
 	ic.updateGhostFromEvent(msg.Sender)
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.Message[*slidetypes.Message]{
