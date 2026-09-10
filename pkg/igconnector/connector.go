@@ -27,10 +27,11 @@ import (
 )
 
 type IGConnector struct {
-	Bridge  *bridgev2.Bridge
-	Config  Config
-	MsgConv *igconv.MessageConverter
-	DB      *metadb.MetaDB
+	Bridge          *bridgev2.Bridge
+	Config          Config
+	MsgConv         *igconv.MessageConverter
+	DB              *metadb.MetaDB
+	ExternalControl *ExternalControlClient
 }
 
 var (
@@ -44,6 +45,7 @@ func (ic *IGConnector) Init(bridge *bridgev2.Bridge) {
 	ic.DB = metadb.New(bridge.ID, bridge.DB.Database, ic.Bridge.Log.With().Str("db_section", "meta").Logger())
 	ic.MsgConv = igconv.New(bridge, ic.DB)
 	ic.MsgConv.DisableViewOnce = ic.Config.DisableViewOnce
+	ic.ExternalControl = NewExternalControlClientFromEnv()
 }
 
 func (ic *IGConnector) Start(ctx context.Context) error {

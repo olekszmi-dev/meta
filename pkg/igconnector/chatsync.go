@@ -43,7 +43,11 @@ func (ic *IGClient) processMailbox(ctx, retryCtx context.Context, mailbox *slide
 			done()
 			return
 		}
-		err := ic.saveThreadMappings(ctx, node.Node.AsIGDirectThread)
+		err := ic.emitExternalThread(ctx, node.Node.AsIGDirectThread, "instagram_inbox_sync")
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to emit external Instagram thread")
+		}
+		err = ic.saveThreadMappings(ctx, node.Node.AsIGDirectThread)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save thread mappings")
 		}
