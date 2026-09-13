@@ -9,7 +9,6 @@ import (
 
 	"go.mau.fi/mautrix-meta/pkg/instameow/slidetypes"
 	"go.mau.fi/mautrix-meta/pkg/messagix/methods"
-	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
 
 func stringPayload(payload map[string]any, key string) string {
@@ -39,16 +38,8 @@ func externalReactionRequest(command *externalCommand) (*slidetypes.CreateReacti
 	}}, nil
 }
 
-func externalReactionConfirmed(response *slidetypes.SendReactionResponse, selfID int64, reaction string) bool {
-	if response == nil || response.Message.ID == "" {
-		return false
-	}
-	for _, candidate := range response.Message.Reactions {
-		if candidate.SenderFBID == selfID && candidate.Reaction == reaction {
-			return true
-		}
-	}
-	return false
+func externalReactionConfirmed(response *slidetypes.SendReactionResponse, messageID string) bool {
+	return response != nil && messageID != "" && response.Message.ID == messageID
 }
 
 func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externalCommand) map[string]any {
@@ -91,7 +82,7 @@ func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externa
 		if err != nil {
 			return map[string]any{"ok": false, "error": err.Error()}
 		}
-		if !externalReactionConfirmed(response, metaid.ParseUserLoginID(ic.UserLogin.ID), request.Input.Emoji) {
+		if !externalReactionConfirmed(response, request.Input.MessageID) {
 			return map[string]any{"ok": false, "error": "provider_confirmation_missing"}
 		}
 		return map[string]any{"ok": true, "providerConfirmed": true, "externalRef": response.Message.ID}
