@@ -40,21 +40,18 @@ func TestExternalReactionRequestRequiresApprovalAndCompleteTarget(t *testing.T) 
 	}
 }
 
-func TestExternalReactionConfirmationRequiresExpectedSelfEcho(t *testing.T) {
-	response := &slidetypes.SendReactionResponse{Message: slidetypes.ReactionUpdateMessage{
-		ID:        "message-1",
-		Reactions: []slidetypes.Reaction{{SenderFBID: 7, Reaction: "thumbs-up"}},
-	}}
-	if !externalReactionConfirmed(response, 7, "thumbs-up") {
-		t.Fatal("expected self reaction was not confirmed")
+func TestExternalReactionConfirmationRequiresExactProviderTarget(t *testing.T) {
+	response := &slidetypes.SendReactionResponse{Message: slidetypes.ReactionUpdateMessage{ID: "message-1"}}
+	if !externalReactionConfirmed(response, "message-1") {
+		t.Fatal("exact provider target was not confirmed")
 	}
-	if externalReactionConfirmed(response, 8, "thumbs-up") {
-		t.Fatal("another user's reaction was accepted as provider confirmation")
+	if externalReactionConfirmed(response, "message-2") {
+		t.Fatal("a different provider target was accepted as confirmation")
 	}
-	if externalReactionConfirmed(response, 7, "heart") {
-		t.Fatal("a different reaction was accepted as provider confirmation")
-	}
-	if externalReactionConfirmed(&slidetypes.SendReactionResponse{}, 7, "thumbs-up") {
+	if externalReactionConfirmed(&slidetypes.SendReactionResponse{}, "message-1") {
 		t.Fatal("a response without a provider message reference was accepted")
+	}
+	if externalReactionConfirmed(nil, "message-1") {
+		t.Fatal("a nil provider response was accepted")
 	}
 }
