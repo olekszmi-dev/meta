@@ -73,6 +73,15 @@ func externalInstagramFolderClass(folder string) string {
 	}
 }
 
+func externalInstagramClassificationForFolder(
+	classification externalInstagramClassification,
+	folder string,
+) externalInstagramClassification {
+	classification.ProviderFolderClass = externalInstagramFolderClass(folder)
+	classification.RequestStatus = externalInstagramRequestStatus(folder)
+	return classification
+}
+
 func externalInstagramSubtypeClass(subtype slidetypes.ThreadSubtype) string {
 	switch subtype {
 	case slidetypes.ThreadSubtypeGroup:

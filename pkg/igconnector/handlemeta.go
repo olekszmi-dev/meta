@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -314,7 +315,11 @@ func (ic *IGClient) handleDelta(ctx context.Context, d *slidetypes.Delta) error 
 	case *slidetypes.PinThreadEvent:
 		res = ic.handleThreadPin(portalKey, evt.IsPinned)
 	case *slidetypes.UpdateThreadFolderEvent:
-		res = ic.handleThreadFolder(portalKey, evt.Folder)
+		folder := evt.Folder
+		if strings.TrimSpace(folder) == "" {
+			folder = evt.IGInboxFolder
+		}
+		res = ic.handleThreadFolder(ctx, portalKey, folder)
 	case *slidetypes.UpdateThreadNameEvent:
 		res = ic.handleThreadName(portalKey, evt)
 	case *slidetypes.UpdateThreadImageEvent:
@@ -519,8 +524,12 @@ func (ic *IGClient) handleThreadDelete(portalKey networkid.PortalKey) bridgev2.E
 	})
 }
 
-func (ic *IGClient) handleThreadFolder(portalKey networkid.PortalKey, folder string) bridgev2.EventHandlingResult {
-	isRequest := folder == "PENDING" || folder == "SPAM"
+func (ic *IGClient) handleThreadFolder(ctx context.Context, portalKey networkid.PortalKey, folder string) bridgev2.EventHandlingResult {
+	requestStatus := externalInstagramRequestStatus(folder)
+	isRequest := requestStatus == externalInstagramRequestPending || requestStatus == externalInstagramRequestSpam
+	if err := ic.emitExternalThreadFolder(ctx, portalKey, folder); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram folder state: %w", err))
+	}
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.ChatInfoChange{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventChatInfoChange,
