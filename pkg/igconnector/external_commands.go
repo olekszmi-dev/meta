@@ -80,10 +80,8 @@ func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externa
 		if thread == nil {
 			return map[string]any{"ok": false, "error": "history_thread_missing"}
 		}
-		kind := "direct"
-		if thread.IsGroup || len(thread.Users) > 1 {
-			kind = "group"
-		}
+		classification := classifyExternalInstagramThread(thread, ic.UserLogin.ID)
+		kind := classification.ConversationKind
 		messages := make([]map[string]any, 0)
 		if thread.SlideMessages != nil {
 			for _, edge := range thread.SlideMessages.Edges {
@@ -96,7 +94,10 @@ func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externa
 			"eventId":   "instagram_history:" + threadID + ":" + strconv.FormatInt(time.Now().UnixMilli(), 10),
 			"eventType": "history.page", "source": "instagram_history",
 			"occurredAt": time.Now().UTC().Format(time.RFC3339Nano), "conversationKind": kind,
-			"payload": map[string]any{"threadId": threadID, "hasMoreBefore": false, "messages": messages},
+			"payload": map[string]any{
+				"threadId": threadID, "hasMoreBefore": false, "messages": messages,
+				"requestStatus": classification.RequestStatus,
+			},
 		})
 		if err != nil {
 			return map[string]any{"ok": false, "error": err.Error()}

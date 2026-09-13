@@ -187,7 +187,7 @@ func (ic *IGClient) wrapChatResync(thread *slidetypes.ThreadInfo, useBundle bool
 	return &simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventChatResync,
-			PortalKey:    ic.makePortalKey(thread.ThreadKey, thread.IsGroup),
+			PortalKey:    ic.makePortalKey(thread.ThreadKey, classifyExternalInstagramThread(thread, ic.UserLogin.ID).ConversationKind == externalInstagramConversationGroup),
 			CreatePortal: true,
 		},
 		ChatInfo:            ic.wrapChatInfo(thread),
@@ -302,13 +302,13 @@ func (ic *IGClient) handleDelta(ctx context.Context, d *slidetypes.Delta) error 
 	case *slidetypes.AdminMessageEvent:
 		res = ic.handleMessage(ctx, portalKey, evt.Message)
 	case *slidetypes.EditMessageEvent:
-		res = ic.handleEdit(portalKey, evt)
+		res = ic.handleEdit(ctx, portalKey, evt)
 	case *slidetypes.CreateReactionEvent:
 		res = ic.handleReaction(ctx, portalKey, evt)
 	case *slidetypes.DeleteReactionEvent:
 		res = ic.handleReactionDelete(ctx, portalKey, evt)
 	case *slidetypes.DeleteMessageEvent:
-		res = ic.handleMessageDelete(portalKey, evt.MessageID)
+		res = ic.handleMessageDelete(ctx, portalKey, evt.MessageID)
 	case *slidetypes.DeleteThreadEvent:
 		res = ic.handleThreadDelete(portalKey)
 	case *slidetypes.PinThreadEvent:
@@ -410,7 +410,10 @@ func (ic *IGClient) updateGhostFromEvent(sender *slidetypes.MessageSender) {
 	}
 }
 
-func (ic *IGClient) handleEdit(portalKey networkid.PortalKey, evt *slidetypes.EditMessageEvent) bridgev2.EventHandlingResult {
+func (ic *IGClient) handleEdit(ctx context.Context, portalKey networkid.PortalKey, evt *slidetypes.EditMessageEvent) bridgev2.EventHandlingResult {
+	if err := ic.emitExternalMessageEdit(ctx, portalKey, evt); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram edit: %w", err))
+	}
 	msgID := metaid.MakeFBMessageID(evt.MessageID)
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.Message[string]{
 		EventMeta: simplevent.EventMeta{
@@ -446,6 +449,9 @@ func (ic *IGClient) handleReaction(ctx context.Context, portalKey networkid.Port
 	if err != nil {
 		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to store reaction mapping in db: %w", err))
 	}
+	if err = ic.emitExternalReaction(ctx, portalKey, "reaction.upsert", evt.MessageID, evt.Reaction); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram reaction: %w", err))
+	}
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.Reaction{
 		EventMeta: simplevent.EventMeta{
 			Type:        bridgev2.RemoteEventReaction,
@@ -476,6 +482,10 @@ func (ic *IGClient) handleReactionDelete(ctx context.Context, portalKey networki
 			return bridgev2.EventHandlingResultIgnored
 		}
 	}
+	evt.Reaction.SenderFBID = reactionSenderFBID
+	if err := ic.emitExternalReaction(ctx, portalKey, "reaction.remove", targetMsgID, evt.Reaction); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram reaction removal: %w", err))
+	}
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.Reaction{
 		EventMeta: simplevent.EventMeta{
 			Type:      bridgev2.RemoteEventReactionRemove,
@@ -486,7 +496,10 @@ func (ic *IGClient) handleReactionDelete(ctx context.Context, portalKey networki
 	})
 }
 
-func (ic *IGClient) handleMessageDelete(portalKey networkid.PortalKey, id string) bridgev2.EventHandlingResult {
+func (ic *IGClient) handleMessageDelete(ctx context.Context, portalKey networkid.PortalKey, id string) bridgev2.EventHandlingResult {
+	if err := ic.emitExternalMessageRemove(ctx, portalKey, id); err != nil {
+		return bridgev2.EventHandlingResultFailed.WithError(fmt.Errorf("failed to persist external Instagram removal: %w", err))
+	}
 	return ic.UserLogin.QueueRemoteEvent(&simplevent.MessageRemove{
 		EventMeta: simplevent.EventMeta{
 			Type:      bridgev2.RemoteEventMessageRemove,
