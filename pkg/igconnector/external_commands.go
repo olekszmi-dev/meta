@@ -82,6 +82,9 @@ func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externa
 		}
 		classification := classifyExternalInstagramThread(thread, ic.UserLogin.ID)
 		kind := classification.ConversationKind
+		if err = ic.emitExternalThread(ctx, thread, "instagram_history"); err != nil {
+			return map[string]any{"ok": false, "error": err.Error()}
+		}
 		messages := make([]map[string]any, 0)
 		if thread.SlideMessages != nil {
 			for _, edge := range thread.SlideMessages.Edges {

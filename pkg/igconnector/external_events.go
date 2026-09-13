@@ -126,6 +126,33 @@ func (ic *IGClient) emitExternalThread(ctx context.Context, thread *slidetypes.T
 	})
 }
 
+func (ic *IGClient) emitExternalThreadFolder(
+	ctx context.Context,
+	portalKey networkid.PortalKey,
+	folder string,
+) error {
+	if ic.Main.ExternalControl == nil || !ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) {
+		return nil
+	}
+	threadID, classification, err := ic.externalPortalDescriptor(ctx, portalKey)
+	if err != nil {
+		return err
+	}
+	classification = externalInstagramClassificationForFolder(classification, folder)
+	threadPayload := map[string]any{
+		"threadId": threadID, "conversationKind": classification.ConversationKind,
+		"requestStatus": classification.RequestStatus, "classificationEvidence": classification,
+	}
+	return ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":          "instagram_thread:" + threadID + ":" + externalEventDigest(threadPayload),
+		"eventType":        "thread.upsert",
+		"source":           "instagram_live",
+		"occurredAt":       time.Now().UTC().Format(time.RFC3339Nano),
+		"conversationKind": classification.ConversationKind,
+		"payload":          map[string]any{"thread": threadPayload},
+	})
+}
+
 func externalAttachments(msg *slidetypes.Message) []map[string]any {
 	result := make([]map[string]any, 0)
 	add := func(id, kind string) {

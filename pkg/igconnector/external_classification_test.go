@@ -123,3 +123,17 @@ func TestExternalInstagramFolderFallbackKeepsRequestStateSeparate(t *testing.T) 
 		t.Fatalf("classification = %#v", got)
 	}
 }
+
+func TestExternalInstagramFolderTransitionPreservesConversationKind(t *testing.T) {
+	classification := externalInstagramClassification{
+		ConversationKind:    externalInstagramConversationDirect,
+		RequestStatus:       externalInstagramRequestPending,
+		ProviderFolderClass: "pending",
+		RoomTypeClass:       externalInstagramConversationDirect,
+	}
+	got := externalInstagramClassificationForFolder(classification, "PRIMARY")
+	if got.ConversationKind != externalInstagramConversationDirect ||
+		got.RequestStatus != externalInstagramRequestAccepted || got.ProviderFolderClass != "primary" {
+		t.Fatalf("classification = %#v", got)
+	}
+}
