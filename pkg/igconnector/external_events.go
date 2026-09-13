@@ -84,8 +84,9 @@ func (ic *IGClient) emitExternalThread(ctx context.Context, thread *slidetypes.T
 	if threadID == "" {
 		return fmt.Errorf("Instagram thread has no durable ID")
 	}
-	participantIDs := make([]string, 0, len(thread.Users))
-	for _, user := range thread.Users {
+	participants, _ := externalInstagramDistinctNonSelfUsers(thread, ic.UserLogin.ID)
+	participantIDs := make([]string, 0, len(participants))
+	for _, user := range participants {
 		personID := externalPersonID(user)
 		if personID == "" {
 			continue
@@ -106,14 +107,14 @@ func (ic *IGClient) emitExternalThread(ctx context.Context, thread *slidetypes.T
 			return err
 		}
 	}
-	kind := "direct"
-	if thread.IsGroup || len(thread.Users) > 1 {
-		kind = "group"
-	}
+	classification := classifyExternalInstagramThread(thread, ic.UserLogin.ID)
+	kind := classification.ConversationKind
 	threadPayload := map[string]any{
 		"threadId": threadID, "conversationKind": kind, "title": thread.ThreadTitle,
 		"avatarRef": thread.ThreadImageURL, "participantIds": participantIDs,
-		"lastMessageAt": thread.LastActivityTimestampMS.Time.UTC().Format(time.RFC3339Nano),
+		"lastMessageAt":          thread.LastActivityTimestampMS.Time.UTC().Format(time.RFC3339Nano),
+		"requestStatus":          classification.RequestStatus,
+		"classificationEvidence": classification,
 	}
 	return ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{
 		"eventId":          "instagram_thread:" + threadID + ":" + externalEventDigest(threadPayload),
@@ -202,22 +203,38 @@ func (ic *IGClient) externalMessagePayload(threadID string, msg *slidetypes.Mess
 	}
 }
 
+func (ic *IGClient) externalPortalDescriptor(
+	ctx context.Context,
+	portalKey networkid.PortalKey,
+) (threadID string, classification externalInstagramClassification, err error) {
+	portal, err := ic.Main.Bridge.GetPortalByKey(ctx, portalKey)
+	if err != nil {
+		return "", classification, err
+	}
+	threadID = string(portalKey.ID)
+	if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
+		if metadata.IGID != "" {
+			threadID = metadata.IGID
+		} else if metadata.IGThreadID != "" {
+			threadID = metadata.IGThreadID
+		}
+	}
+	return threadID, classifyExternalInstagramPortal(portal), nil
+}
+
 func (ic *IGClient) emitExternalMessage(ctx context.Context, portalKey networkid.PortalKey, msg *slidetypes.Message) error {
 	if ic.Main.ExternalControl == nil || !ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) || msg == nil {
 		return nil
 	}
 	threadID := msg.ThreadFBID
-	if threadID == "" {
-		threadID = string(portalKey.ID)
-	}
-	portal, err := ic.Main.Bridge.GetPortalByKey(ctx, portalKey)
+	portalThreadID, classification, err := ic.externalPortalDescriptor(ctx, portalKey)
 	if err != nil {
 		return err
 	}
-	kind := "direct"
-	if portal.RoomType != "dm" {
-		kind = "group"
+	if threadID == "" {
+		threadID = portalThreadID
 	}
+	kind := classification.ConversationKind
 	messageID := msg.ID
 	if messageID == "" {
 		messageID = msg.MessageID
@@ -232,8 +249,111 @@ func (ic *IGClient) emitExternalMessage(ctx context.Context, portalKey networkid
 		"occurredAt":       time.Now().UTC().Format(time.RFC3339Nano),
 		"conversationKind": kind,
 		"payload": map[string]any{
-			"threadId": threadID,
-			"message":  ic.externalMessagePayload(threadID, msg),
+			"threadId":      threadID,
+			"requestStatus": classification.RequestStatus,
+			"message":       ic.externalMessagePayload(threadID, msg),
 		},
+	})
+}
+
+func (ic *IGClient) emitExternalMessageEdit(
+	ctx context.Context,
+	portalKey networkid.PortalKey,
+	evt *slidetypes.EditMessageEvent,
+) error {
+	if ic.Main.ExternalControl == nil || !ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) || evt == nil {
+		return nil
+	}
+	threadID, classification, err := ic.externalPortalDescriptor(ctx, portalKey)
+	if err != nil {
+		return err
+	}
+	editedAt := evt.SlideEditHistoryEntry.TimestampMS.Time.UTC()
+	payload := map[string]any{
+		"threadId":      threadID,
+		"requestStatus": classification.RequestStatus,
+		"message": map[string]any{
+			"providerMessageId": evt.MessageID,
+			"threadId":          threadID,
+			"timestamp":         editedAt.Format(time.RFC3339Nano),
+			"text":              evt.TextBody,
+			"editedAt":          editedAt.Format(time.RFC3339Nano),
+		},
+	}
+	return ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":   "instagram_edit:" + evt.MessageID + ":" + strconv.FormatInt(editedAt.UnixMilli(), 10),
+		"eventType": "message.edit", "source": "instagram_live",
+		"occurredAt":       editedAt.Format(time.RFC3339Nano),
+		"conversationKind": classification.ConversationKind,
+		"payload":          payload,
+	})
+}
+
+func (ic *IGClient) emitExternalMessageRemove(
+	ctx context.Context,
+	portalKey networkid.PortalKey,
+	messageID string,
+) error {
+	if ic.Main.ExternalControl == nil || !ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) {
+		return nil
+	}
+	threadID, classification, err := ic.externalPortalDescriptor(ctx, portalKey)
+	if err != nil {
+		return err
+	}
+	removedAt := time.Now().UTC()
+	return ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":   "instagram_remove:" + messageID,
+		"eventType": "message.remove", "source": "instagram_live",
+		"occurredAt":       removedAt.Format(time.RFC3339Nano),
+		"conversationKind": classification.ConversationKind,
+		"payload": map[string]any{
+			"threadId": threadID, "requestStatus": classification.RequestStatus,
+			"message": map[string]any{
+				"providerMessageId": messageID, "threadId": threadID,
+				"timestamp": removedAt.Format(time.RFC3339Nano), "removed": true,
+			},
+		},
+	})
+}
+
+func (ic *IGClient) emitExternalReaction(
+	ctx context.Context,
+	portalKey networkid.PortalKey,
+	eventType, messageID string,
+	reaction slidetypes.Reaction,
+) error {
+	if ic.Main.ExternalControl == nil || !ic.Main.ExternalControl.OwnsLogin(string(ic.UserLogin.ID)) {
+		return nil
+	}
+	threadID, classification, err := ic.externalPortalDescriptor(ctx, portalKey)
+	if err != nil {
+		return err
+	}
+	occurredAt := reaction.ReactionTimestampMS.Time.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	reactionPayload := map[string]any{
+		"providerMessageId": messageID,
+		"senderId":          strconv.FormatInt(reaction.SenderFBID, 10),
+		"reaction":          reaction.Reaction,
+		"occurredAt":        occurredAt.Format(time.RFC3339Nano),
+	}
+	payload := map[string]any{
+		"threadId": threadID, "requestStatus": classification.RequestStatus,
+		"reaction": reactionPayload,
+	}
+	eventIdentity := map[string]any{
+		"eventType": eventType, "providerMessageId": messageID,
+		"senderId":             strconv.FormatInt(reaction.SenderFBID, 10),
+		"reactionLogMessageId": reaction.LogMessageID, "reaction": reaction.Reaction,
+	}
+	return ic.Main.ExternalControl.EmitEvent(ctx, map[string]any{
+		"eventId":   "instagram_" + eventType + ":" + externalEventDigest(eventIdentity),
+		"eventType": eventType, "source": "instagram_live",
+		"occurredAt":       occurredAt.Format(time.RFC3339Nano),
+		"conversationKind": classification.ConversationKind,
+		"payload":          payload,
 	})
 }

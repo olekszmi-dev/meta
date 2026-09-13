@@ -155,6 +155,8 @@ func (ic *IGClient) makeMinimalDMInfo(userID int64) *bridgev2.ChatInfo {
 }
 
 func (ic *IGClient) wrapChatInfo(info *slidetypes.ThreadInfo) *bridgev2.ChatInfo {
+	classification := classifyExternalInstagramThread(info, ic.UserLogin.ID)
+	participants, _ := externalInstagramDistinctNonSelfUsers(info, ic.UserLogin.ID)
 	if info.ThreadFBID != info.ID ||
 		(info.IsGroup && strconv.FormatInt(info.ThreadKey, 10) != info.ID) ||
 		(!info.IsGroup && len(info.Users) == 1 && info.ThreadKey != info.Users[0].InteropMessagingUserFBID) {
@@ -175,7 +177,7 @@ func (ic *IGClient) wrapChatInfo(info *slidetypes.ThreadInfo) *bridgev2.ChatInfo
 	roomType := database.RoomTypeDM
 	var name *string
 	var avatar *bridgev2.Avatar
-	if info.IsGroup || len(info.Users) > 1 {
+	if classification.ConversationKind == externalInstagramConversationGroup {
 		roomType = database.RoomTypeDefault
 		name = &info.ThreadTitle
 		avatar = wrapAvatar(info.ThreadImageURL)
@@ -230,8 +232,12 @@ func (ic *IGClient) wrapChatInfo(info *slidetypes.ThreadInfo) *bridgev2.ChatInfo
 		addMember(member)
 	}
 	addMember(info.Viewer)
-	if len(info.Users) == 1 && info.ThreadKey == info.Users[0].InteropMessagingUserFBID {
-		members.OtherUserID = metaid.MakeUserID(info.ThreadKey)
+	if classification.ConversationKind == externalInstagramConversationDirect && len(participants) == 1 {
+		otherUserID := participants[0].InteropMessagingUserFBID
+		if otherUserID == 0 {
+			otherUserID = info.ThreadKey
+		}
+		members.OtherUserID = metaid.MakeUserID(otherUserID)
 	} else if len(info.Users) == 0 && info.ThreadKey == info.Viewer.InteropMessagingUserFBID {
 		members.OtherUserID = metaid.MakeUserID(info.ThreadKey)
 		members.MemberMap = makeNoteToSelfMembers(members.OtherUserID, ic.wrapUserInfo(info.Viewer))
@@ -250,7 +256,7 @@ func (ic *IGClient) wrapChatInfo(info *slidetypes.ThreadInfo) *bridgev2.ChatInfo
 		CanBackfill:    true,
 		ExtraUpdates: func(ctx context.Context, portal *bridgev2.Portal) (changed bool) {
 			meta := portal.Metadata.(*metaid.PortalMetadata)
-			if info.IsGroup {
+			if classification.ConversationKind == externalInstagramConversationGroup {
 				meta.ThreadType = table.GROUP_THREAD
 			} else {
 				meta.ThreadType = table.ONE_TO_ONE
