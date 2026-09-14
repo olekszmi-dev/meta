@@ -157,6 +157,23 @@ func TestDeterministicPagingDigestAndTerminalProof(t *testing.T) {
 	}
 }
 
+func TestSnapshotDigestMatchesZeroCanonicalJSON(t *testing.T) {
+	messages := []SnapshotMessage{{
+		ProviderMessageID: "message-html",
+		SenderID:          "owner",
+		Direction:         "outbound",
+		Timestamp:         time.Unix(1, 0).UTC(),
+		Text:              "<b>&",
+		Media:             []map[string]any{},
+		Edits:             []map[string]any{},
+		Reactions:         []map[string]any{},
+	}}
+	const expected = "1e1e5f066de739f5772f559334aabaa7d6b4dd89f64465e99c659821b112ffee"
+	if actual := digestSnapshot(messages); actual != expected {
+		t.Fatalf("canonical snapshot digest = %s, expected %s", actual, expected)
+	}
+}
+
 func TestOwnerAndPortalFailClosed(t *testing.T) {
 	if _, err := Export(context.Background(), nil, nil, "conversation", 50, "source", func(*bridgev2.Portal) []string { return nil }, testProviderMessageID, nil, func(context.Context, any) error { return nil }); !errors.Is(err, ErrLoginNotOwned) {
 		t.Fatalf("nil owner error = %v", err)
