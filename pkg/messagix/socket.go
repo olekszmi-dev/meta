@@ -3,6 +3,7 @@ package messagix
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -44,6 +45,8 @@ type SocketLSRequestPayload struct {
 	Type      int    `json:"type"`
 }
 
+var ErrFatalSocketSyncError = errors.New("failed to ensure db 1 is synced")
+
 func (c *Client) onSocketConnect(ctx context.Context, _ func(error)) error {
 	c.canSendMessages.Set()
 
@@ -57,7 +60,7 @@ func (c *Client) onSocketConnect(ctx context.Context, _ func(error)) error {
 
 	err := c.syncManager.ensureSyncedSocket(ctx, minimalFBSync)
 	if err != nil {
-		return fmt.Errorf("failed to ensure db 1 is synced: %w", err)
+		return fmt.Errorf("%w: %w", ErrFatalSocketSyncError, err)
 	}
 
 	if reconnect {
@@ -164,7 +167,7 @@ func (c *Client) PostHandlePublishResponse(tbl *table.LSTable) {
 	syncGroupsNeedUpdate := methods.NeedUpdateSyncGroups(tbl)
 	if syncGroupsNeedUpdate {
 		c.Logger.Debug().
-			Any("LSExecuteFirstBlockForSyncTransaction", tbl.LSExecuteFirstBlockForSyncTransaction).
+			Any("LSExecuteFirstBlockForSyncTransaction", tbl.GetLSExecuteFirstBlockForSyncTransactionV4()).
 			Any("LSUpsertSyncGroupThreadsRange", tbl.LSUpsertSyncGroupThreadsRange).
 			Msg("Updating sync groups")
 		err := c.syncManager.updateSyncGroupCursors(tbl)
