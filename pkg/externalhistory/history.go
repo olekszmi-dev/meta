@@ -18,6 +18,8 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
 
 const (
@@ -36,6 +38,7 @@ var (
 	ErrNoMatrixRoom          = errors.New("history_snapshot_matrix_room_missing")
 	ErrMessageMapping        = errors.New("history_snapshot_message_mapping_invalid")
 	ErrMatrixEventMissing    = errors.New("history_snapshot_matrix_event_missing")
+	ErrProtocolUnclassified  = errors.New("history_snapshot_protocol_lane_unclassified")
 )
 
 type EmitFunc func(context.Context, any) error
@@ -45,6 +48,95 @@ type ProviderMessageIDFunc func(networkid.MessageID) (string, bool)
 type PortalConversationIDsFunc func(*bridgev2.Portal) []string
 
 type EventDecorator func(*bridgev2.Portal, map[string]any)
+
+// DecodeProviderMessageID is the single provider-ID decoder used by offline
+// export and connector history paths. It deliberately returns only the
+// provider's stable message identifier, never the bridge-native wrapper.
+func DecodeProviderMessageID(provider string, messageID networkid.MessageID) (string, bool) {
+	switch provider {
+	case "messenger":
+		switch parsed := metaid.ParseMessageID(messageID).(type) {
+		case metaid.ParsedFBMessageID:
+			return parsed.ID, parsed.ID != ""
+		case metaid.ParsedWAMessageID:
+			return parsed.ID, parsed.ID != ""
+		default:
+			return "", false
+		}
+	case "instagram":
+		parsed, ok := metaid.ParseMessageID(messageID).(metaid.ParsedFBMessageID)
+		return parsed.ID, ok && parsed.ID != ""
+	default:
+		return "", false
+	}
+}
+
+// BuildHistoryEvents is the shared paging and evidence builder for live and
+// offline history. Callers may decorate the generated events, but must not
+// alter the evidence fields.
+func BuildHistoryEvents(source, conversationID string, messages []SnapshotMessage, pageSize int, decorate func(map[string]any)) ([]map[string]any, Result, error) {
+	if conversationID == "" || pageSize < 1 || pageSize > MaxPageSize {
+		return nil, Result{}, ErrCommandPayloadInvalid
+	}
+	corpusDigest := digestSnapshot(messages)
+	return buildHistoryEvents(source, conversationID, messages, pageSize, digestStrings(source, conversationID, corpusDigest), decorate)
+}
+
+func buildHistoryEvents(source, conversationID string, messages []SnapshotMessage, pageSize int, snapshotRef string, decorate func(map[string]any)) ([]map[string]any, Result, error) {
+	if conversationID == "" || pageSize < 1 || pageSize > MaxPageSize {
+		return nil, Result{}, ErrCommandPayloadInvalid
+	}
+	corpusDigest := digestSnapshot(messages)
+	pageCount := (len(messages) + pageSize - 1) / pageSize
+	pageDigests := make([]string, pageCount)
+	pageMessageCounts := make([]int, pageCount)
+	for pageIndex := range pageDigests {
+		start := pageIndex * pageSize
+		end := min(start+pageSize, len(messages))
+		pageDigests[pageIndex] = digestSnapshot(messages[start:end])
+		pageMessageCounts[pageIndex] = end - start
+	}
+	snapshotDigest := digestPageDescriptors(pageDigests, pageMessageCounts)
+	evidenceRef := digestStrings(EvidenceVersion, EvidenceKind, snapshotRef, corpusDigest, snapshotDigest, strconv.Itoa(pageCount), strconv.Itoa(len(messages)))
+	events := make([]map[string]any, 0, pageCount+1)
+	for pageIndex := 0; pageIndex < pageCount; pageIndex++ {
+		start := pageIndex * pageSize
+		end := min(start+pageSize, len(messages))
+		pageMessages := messages[start:end]
+		cursorHash := digestStrings(snapshotRef, strconv.Itoa(pageIndex), strconv.Itoa(pageCount), pageCursor(pageMessages))
+		payload := historyPayload(conversationID, pageMessages, historyEvidence{
+			Phase: "page", SnapshotRef: snapshotRef, CorpusDigest: corpusDigest, CursorHash: cursorHash,
+			PageDigest: pageDigests[pageIndex], PageIndex: pageIndex, PageCount: pageCount,
+			MessageCount: len(pageMessages), Complete: false, HasMoreBefore: nil, ObservedAt: observedAt(pageMessages),
+		})
+		history := historyEvent(source, snapshotRef, pageIndex, pageMessages, payload)
+		if decorate != nil {
+			decorate(history)
+		}
+		events = append(events, history)
+	}
+	terminalCursorHash := digestStrings(snapshotRef, "terminal", strconv.Itoa(pageCount))
+	terminalPayload := historyPayload(conversationID, nil, historyEvidence{
+		Phase: "terminal", SnapshotRef: snapshotRef, CorpusDigest: corpusDigest, SnapshotDigest: snapshotDigest,
+		CursorHash: terminalCursorHash, PageIndex: pageCount, PageCount: pageCount, MessageCount: len(messages),
+		Complete: true, HasMoreBefore: false, EvidenceRef: evidenceRef, ObservedAt: observedAt(messages),
+	})
+	terminal := historyEvent(source, snapshotRef, pageCount, nil, terminalPayload)
+	if decorate != nil {
+		decorate(terminal)
+	}
+	events = append(events, terminal)
+	return events, Result{
+		PageCount:      pageCount,
+		MessageCount:   len(messages),
+		EventCount:     len(events),
+		SnapshotRef:    snapshotRef,
+		CorpusDigest:   corpusDigest,
+		SnapshotDigest: snapshotDigest,
+		CursorHash:     terminalCursorHash,
+		EvidenceRef:    evidenceRef,
+	}, nil
+}
 
 type Result struct {
 	PageCount      int    `json:"pageCount"`
@@ -137,77 +229,20 @@ func Export(
 
 	corpusDigest := digestSnapshot(messages)
 	snapshotRef := digestStrings(source, conversationID, string(portal.ID), string(portal.Receiver), string(login.ID), corpusDigest)
-	pageCount := (len(messages) + pageSize - 1) / pageSize
-	pageDigests := make([]string, pageCount)
-	pageMessageCounts := make([]int, pageCount)
-	for pageIndex := range pageDigests {
-		start := pageIndex * pageSize
-		end := min(start+pageSize, len(messages))
-		pageDigests[pageIndex] = digestSnapshot(messages[start:end])
-		pageMessageCounts[pageIndex] = end - start
-	}
-	snapshotDigest := digestPageDescriptors(pageDigests, pageMessageCounts)
-	evidenceRef := digestStrings(EvidenceVersion, EvidenceKind, snapshotRef, corpusDigest, snapshotDigest, strconv.Itoa(pageCount), strconv.Itoa(len(messages)))
-
-	for pageIndex := 0; pageIndex < pageCount; pageIndex++ {
-		start := pageIndex * pageSize
-		end := min(start+pageSize, len(messages))
-		pageMessages := messages[start:end]
-		cursorHash := digestStrings(snapshotRef, strconv.Itoa(pageIndex), strconv.Itoa(pageCount), pageCursor(pageMessages))
-		payload := historyPayload(conversationID, pageMessages, historyEvidence{
-			Phase:         "page",
-			SnapshotRef:   snapshotRef,
-			CorpusDigest:  corpusDigest,
-			CursorHash:    cursorHash,
-			PageDigest:    pageDigests[pageIndex],
-			PageIndex:     pageIndex,
-			PageCount:     pageCount,
-			MessageCount:  len(pageMessages),
-			Complete:      false,
-			HasMoreBefore: nil,
-			ObservedAt:    observedAt(pageMessages),
-		})
-		historyEvent := historyEvent(source, snapshotRef, pageIndex, pageMessages, payload)
+	events, result, err := buildHistoryEvents(source, conversationID, messages, pageSize, snapshotRef, func(historyEvent map[string]any) {
 		if decorate != nil {
 			decorate(portal, historyEvent)
 		}
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	for _, historyEvent := range events {
 		if err = emit(ctx, historyEvent); err != nil {
 			return Result{}, err
 		}
 	}
-
-	terminalCursorHash := digestStrings(snapshotRef, "terminal", strconv.Itoa(pageCount))
-	terminalPayload := historyPayload(conversationID, nil, historyEvidence{
-		Phase:          "terminal",
-		SnapshotRef:    snapshotRef,
-		CorpusDigest:   corpusDigest,
-		SnapshotDigest: snapshotDigest,
-		CursorHash:     terminalCursorHash,
-		PageIndex:      pageCount,
-		PageCount:      pageCount,
-		MessageCount:   len(messages),
-		Complete:       true,
-		HasMoreBefore:  false,
-		EvidenceRef:    evidenceRef,
-		ObservedAt:     observedAt(messages),
-	})
-	terminalEvent := historyEvent(source, snapshotRef, pageCount, nil, terminalPayload)
-	if decorate != nil {
-		decorate(portal, terminalEvent)
-	}
-	if err = emit(ctx, terminalEvent); err != nil {
-		return Result{}, err
-	}
-	return Result{
-		PageCount:      pageCount,
-		MessageCount:   len(messages),
-		EventCount:     pageCount + 1,
-		SnapshotRef:    snapshotRef,
-		CorpusDigest:   corpusDigest,
-		SnapshotDigest: snapshotDigest,
-		CursorHash:     terminalCursorHash,
-		EvidenceRef:    evidenceRef,
-	}, nil
+	return result, nil
 }
 
 func validatePortalRoom(portal *bridgev2.Portal) error {
@@ -402,6 +437,12 @@ func buildSnapshotMessages(ctx context.Context, portal *bridgev2.Portal, login *
 		result = append(result, message)
 	}
 	return result, nil
+}
+
+// BuildSnapshotMessages projects bridge mappings and Matrix event bodies into
+// the same provider-neutral history representation used by live export.
+func BuildSnapshotMessages(ctx context.Context, portal *bridgev2.Portal, login *bridgev2.UserLogin, rows []*database.Message, providerMessageID ProviderMessageIDFunc, fetch MatrixEventFetcher, fetchReactions ReactionFetcher) ([]SnapshotMessage, error) {
+	return buildSnapshotMessages(ctx, portal, login, rows, providerMessageID, fetch, fetchReactions)
 }
 
 func directionFor(senderID networkid.UserID, loginID networkid.UserLoginID) string {
@@ -609,6 +650,8 @@ func ErrorCode(err error) string {
 		return ErrMessageMapping.Error()
 	case errors.Is(err, ErrMatrixEventMissing):
 		return ErrMatrixEventMissing.Error()
+	case errors.Is(err, ErrProtocolUnclassified):
+		return ErrProtocolUnclassified.Error()
 	default:
 		return "history_snapshot_failed"
 	}
