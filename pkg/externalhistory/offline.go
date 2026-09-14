@@ -1,7 +1,6 @@
 package externalhistory
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -551,23 +550,6 @@ type datasetDigestInput struct {
 func digestDataset(provider, source, loginHash string, pageSize int, complete []BundleThread, failed []BundleFailure) string {
 	data := canonicalJSON(datasetDigestInput{Version: OfflineBundleVersion, Provider: provider, Source: source, NativeLoginRefHash: loginHash, PageSize: pageSize, CompleteThreads: complete, FailedThreads: failed})
 	return sha256Hex(string(data))
-}
-
-func canonicalJSON(value any) []byte {
-	raw, _ := json.Marshal(value)
-	var normalized any
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.UseNumber()
-	if decoder.Decode(&normalized) != nil {
-		return raw
-	}
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if encoder.Encode(normalized) != nil {
-		return raw
-	}
-	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
 }
 
 func sha256Hex(value string) string {

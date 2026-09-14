@@ -1,6 +1,7 @@
 package externalhistory
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -629,9 +630,26 @@ func digestStrings(values ...string) string {
 }
 
 func digestSnapshot(messages []SnapshotMessage) string {
-	data, _ := json.Marshal(serializeSnapshotMessages(messages))
+	data := canonicalJSON(serializeSnapshotMessages(messages))
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+func canonicalJSON(value any) []byte {
+	raw, _ := json.Marshal(value)
+	var normalized any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if decoder.Decode(&normalized) != nil {
+		return raw
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(normalized) != nil {
+		return raw
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
 }
 
 func ErrorCode(err error) string {
