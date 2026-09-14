@@ -23,6 +23,9 @@ func TestExternalCommandTimeoutOnlyBoundsReadOnlyProjections(t *testing.T) {
 			t.Fatalf("%s timeout = %v, want synchronous execution", commandType, got)
 		}
 	}
+	if got := externalCommandTimeout("history_snapshot"); got != externalProjectionTimeout {
+		t.Fatalf("history snapshot timeout = %v, want %v", got, externalProjectionTimeout)
+	}
 }
 
 func TestExecuteBoundedExternalCommandReturnsCompletedResult(t *testing.T) {
