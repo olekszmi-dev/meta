@@ -7,8 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
+
+	"go.mau.fi/mautrix-meta/pkg/externalhistory"
 	"go.mau.fi/mautrix-meta/pkg/instameow/slidetypes"
 	"go.mau.fi/mautrix-meta/pkg/messagix/methods"
+	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
 
 func stringPayload(payload map[string]any, key string) string {
@@ -42,11 +47,87 @@ func externalReactionConfirmed(response *slidetypes.SendReactionResponse, messag
 	return response != nil && messageID != "" && response.Message.ID == messageID
 }
 
+func (ic *IGClient) selectedExternalLogin() (*bridgev2.UserLogin, *IGClient, bool) {
+	if ic == nil || ic.Main == nil || ic.Main.Bridge == nil || ic.Main.ExternalControl == nil {
+		return nil, nil, false
+	}
+	var selected *bridgev2.UserLogin
+	for _, login := range ic.Main.Bridge.GetAllCachedUserLogins() {
+		if !ic.Main.ExternalControl.OwnsLogin(string(login.ID)) {
+			continue
+		}
+		if selected != nil {
+			return nil, nil, false
+		}
+		selected = login
+	}
+	if selected == nil {
+		return nil, nil, false
+	}
+	client, ok := selected.Client.(*IGClient)
+	if !ok || client == nil {
+		return nil, nil, false
+	}
+	return selected, client, true
+}
+
+func instagramProviderMessageID(messageID networkid.MessageID) (string, bool) {
+	parsed, ok := metaid.ParseMessageID(messageID).(metaid.ParsedFBMessageID)
+	return parsed.ID, ok && parsed.ID != ""
+}
+
+func instagramPortalConversationIDs(portal *bridgev2.Portal) []string {
+	if portal == nil {
+		return nil
+	}
+	ids := []string{string(portal.ID)}
+	if metadata, ok := portal.Metadata.(*metaid.PortalMetadata); ok {
+		if metadata.IGID != "" && metadata.IGID != ids[0] {
+			ids = append(ids, metadata.IGID)
+		}
+		if metadata.IGThreadID != "" && metadata.IGThreadID != ids[0] && metadata.IGThreadID != metadata.IGID {
+			ids = append(ids, metadata.IGThreadID)
+		}
+	}
+	return ids
+}
+
+func decorateInstagramHistoryEvent(portal *bridgev2.Portal, event map[string]any) {
+	classification := classifyExternalInstagramPortal(portal)
+	event["conversationKind"] = classification.ConversationKind
+	if payload, ok := event["payload"].(map[string]any); ok {
+		payload["conversationKind"] = classification.ConversationKind
+		payload["requestStatus"] = classification.RequestStatus
+		payload["classificationEvidence"] = classification
+	}
+}
+
+func (ic *IGClient) executeHistorySnapshot(ctx context.Context, command *externalCommand) map[string]any {
+	conversationID, pageSize, err := externalhistory.ParseRequest(command.Payload)
+	if err != nil {
+		return map[string]any{"ok": false, "error": "history_snapshot_payload_invalid"}
+	}
+	login, _, ok := ic.selectedExternalLogin()
+	if !ok {
+		return map[string]any{"ok": false, "error": "history_snapshot_login_ambiguous_or_unavailable"}
+	}
+	result, err := externalhistory.Export(
+		ctx, ic.Main.Bridge, login, conversationID, pageSize, "instagram_native_portal",
+		instagramPortalConversationIDs, instagramProviderMessageID, decorateInstagramHistoryEvent, ic.Main.ExternalControl.EmitEvent,
+	)
+	if err != nil {
+		return map[string]any{"ok": false, "error": externalhistory.ErrorCode(err)}
+	}
+	return map[string]any{"ok": true, "status": "completed", "evidence": result}
+}
+
 func (ic *IGClient) executeExternalCommand(ctx context.Context, command *externalCommand) map[string]any {
 	if command == nil {
 		return map[string]any{"ok": false, "error": "command_missing"}
 	}
 	switch command.CommandType {
+	case "history_snapshot":
+		return ic.executeHistorySnapshot(ctx, command)
 	case "send":
 		if command.ApprovalRef == "" || command.ApprovedAt == "" {
 			return map[string]any{"ok": false, "error": "approved_send_required"}

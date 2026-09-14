@@ -10,9 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
+
+	"go.mau.fi/mautrix-meta/pkg/externalhistory"
 	"go.mau.fi/mautrix-meta/pkg/messagix/methods"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
 
 const (
@@ -23,7 +28,7 @@ const (
 
 func externalCommandTimeout(commandType string) time.Duration {
 	switch commandType {
-	case "contacts_sync", "threads_sync":
+	case "contacts_sync", "threads_sync", "history_snapshot":
 		return externalProjectionTimeout
 	default:
 		return 0
@@ -63,6 +68,83 @@ func (m *MetaConnector) selectedExternalClient() *MetaClient {
 		}
 	}
 	return nil
+}
+
+func (m *MetaConnector) selectedExternalLogin() (*bridgev2.UserLogin, *MetaClient, bool) {
+	if m == nil || m.Bridge == nil || m.ExternalControl == nil {
+		return nil, nil, false
+	}
+	var selected *bridgev2.UserLogin
+	for _, login := range m.Bridge.GetAllCachedUserLogins() {
+		if !m.ExternalControl.OwnsLogin(string(login.ID)) {
+			continue
+		}
+		if selected != nil {
+			return nil, nil, false
+		}
+		selected = login
+	}
+	if selected == nil {
+		return nil, nil, false
+	}
+	client, ok := selected.Client.(*MetaClient)
+	if !ok || client == nil {
+		return nil, nil, false
+	}
+	return selected, client, true
+}
+
+func messengerProviderMessageID(messageID networkid.MessageID) (string, bool) {
+	switch parsed := metaid.ParseMessageID(messageID).(type) {
+	case metaid.ParsedFBMessageID:
+		return parsed.ID, parsed.ID != ""
+	case metaid.ParsedWAMessageID:
+		providerID := string(parsed.ID)
+		return providerID, providerID != ""
+	default:
+		return "", false
+	}
+}
+
+func messengerPortalConversationIDs(portal *bridgev2.Portal) []string {
+	if portal == nil {
+		return nil
+	}
+	return []string{string(portal.ID)}
+}
+
+func decorateMessengerHistoryEvent(portal *bridgev2.Portal, event map[string]any) {
+	projection, ok := externalThreadProjectionFromPortal(portal)
+	if !ok {
+		event["connectorLane"] = externalLaneMessengerUnknown
+		event["conversationKind"] = externalConversationUnknown
+		return
+	}
+	event["connectorLane"] = projection.Classification.connectorLane
+	event["conversationKind"] = projection.Classification.conversationKind
+	if payload, ok := event["payload"].(map[string]any); ok {
+		payload["connectorLane"] = projection.Classification.connectorLane
+		payload["conversationKind"] = projection.Classification.conversationKind
+	}
+}
+
+func (m *MetaConnector) executeHistorySnapshot(ctx context.Context, command *externalCommand) map[string]any {
+	conversationID, pageSize, err := externalhistory.ParseRequest(command.Payload)
+	if err != nil {
+		return map[string]any{"ok": false, "error": "history_snapshot_payload_invalid"}
+	}
+	login, _, ok := m.selectedExternalLogin()
+	if !ok {
+		return map[string]any{"ok": false, "error": "history_snapshot_login_ambiguous_or_unavailable"}
+	}
+	result, err := externalhistory.Export(
+		ctx, m.Bridge, login, conversationID, pageSize, "mautrix_native_portal",
+		messengerPortalConversationIDs, messengerProviderMessageID, decorateMessengerHistoryEvent, m.ExternalControl.EmitEvent,
+	)
+	if err != nil {
+		return map[string]any{"ok": false, "error": externalhistory.ErrorCode(err)}
+	}
+	return map[string]any{"ok": true, "status": "completed", "evidence": result}
 }
 
 func stringPayload(payload map[string]any, key string) string {
@@ -259,6 +341,9 @@ func externalContactsSyncLimit(payload map[string]any) (int64, error) {
 }
 
 func (m *MetaConnector) executeExternalCommand(ctx context.Context, command *externalCommand) map[string]any {
+	if command != nil && command.CommandType == "history_snapshot" {
+		return m.executeHistorySnapshot(ctx, command)
+	}
 	client := m.selectedExternalClient()
 	if client == nil {
 		return map[string]any{"ok": false, "error": "selected_login_not_loaded"}
